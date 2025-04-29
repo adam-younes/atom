@@ -11,7 +11,7 @@ SRC_COMMON := src/main.c
 
 ifeq ($(PLATFORM),WAYLAND)
 	CFLAGS  += -D__linux__
-	SRC_BACKEND := src/window.c
+	SRC_BACKEND := src/window/window.c
 	LDFLAGS += $(shell pkg-config --cflags --libs wayland-client)
 endif
 
@@ -28,9 +28,9 @@ bin/test_window: $(OBJS) | bin
 bin:
 	mkdir -p bin
 
-%.o: %.c include/wayland-logo.h include/window.h
+%.o: %.c wayland-logo.h window/window.h math/la.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -rf *.o src/*.o bin
+	rm -rf *.o src/*.o bin src/window/*.o
 

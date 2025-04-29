@@ -10,8 +10,8 @@
 #include <sys/time.h>
 #include <sys/un.h>
 
-#include "window.h"
-#include "wayland-logo.h"
+#include "window/window.h"
+#include "../wayland-logo.h"
 
 // @main
 int main() {
