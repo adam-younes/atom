@@ -4,14 +4,14 @@
 #include <math/la.h>
 #include <wayland-client.h>
 #include <wayland-egl.h>
-#include <window.h>
+#include <window/window.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 
-#include <graphics.h>
-#include <xdg-shell-client-protocol.h>
+#include <opengl/opengl.h>
+#include <window/xdg-shell-client-protocol.h>
 
-int main(int argc, char **argv) {
+int main(void) {
     // connect to wayland
     wl_display = wl_display_connect(NULL);
     if (!wl_display) {

@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -O2 -std=c99 -I../include
 PKG   = $(shell pkg-config --cflags --libs wayland-client wayland-egl egl glesv2)
 
-SRCS = main.c graphics/gl.c window/xdg-shell-protocol.c
+SRCS = main.c opengl/glad.c window/xdg-shell-protocol.c
 OBJS = $(SRCS:.c=.o)
 
 main: $(OBJS)
@@ -12,5 +12,5 @@ main: $(OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm *.o window/*.o graphics/*.o main
+	rm *.o window/*.o opengl/*.o main
 
