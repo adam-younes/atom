@@ -2,9 +2,9 @@
 #define ATOM_GRAPHICS_H 
 
 #include <EGL/egl.h>
-#include <glad/gl.h>
 #include <stdlib.h> 
 #include <stdio.h>
+#include <opengl/glad.h>
 #include <wayland-egl.h>
 
 static struct wl_egl_window *egl_window    = NULL;

@@ -1,7 +1,7 @@
 #include <wayland-client.h>
 #include <string.h>
 #include <stdbool.h>
-#include <xdg-shell-client-protocol.h>
+#include <window/xdg-shell-client-protocol.h>
 
 static bool running = true;
 
