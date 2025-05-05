@@ -15,8 +15,7 @@ typedef struct {
 
 void load_mesh(const char *path, mesh *out);
 
-void load_glb(const char *path, mesh *out);
-void load_obj(const char *path, mesh *out); 
+extern void load_obj(const char *path, mesh *out);
 
 void destroy_mesh(mesh *m);
 

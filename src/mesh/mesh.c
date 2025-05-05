@@ -11,7 +11,7 @@ static const struct {
     mesh_loader fun;
 } loaders[] = {
     { "obj", load_obj },
-    { "glb", load_glb },
+    { NULL , NULL     }
 };
 
 void load_mesh(const char *path, mesh *out) {
@@ -23,23 +23,22 @@ void load_mesh(const char *path, mesh *out) {
 
     const char *ext = dot + 1;
 
-    if (strcmp(ext, "obj") == 0) {
-        load_obj(path, out);
-    } else if {
-        load_glb(path, out);
-    } else {
-        fprintf(stderr, "load_mesh: unsupported mesh format '%s'\n", ext);
+    uint8_t i;
+    for (i = 0 ; loaders[i].ext ; i++) {
+        if (strcmp(ext, loaders[i].ext) == 0) {
+            loaders[i].fun(path, out); 
+            return;
+        }
     }
-}
 
-void load_obj(const char *path, mesh *out) {
-
-}
-
-void load_glb(const char *path, mesh *out) {
-    
+    fprintf(stderr, "Unsupported file format '.%s'\n", ext);
 }
 
 void destroy_mesh(mesh *m) {
-
+    free(m->positions);
+    free(m->normals);
+    free(m->texcoords);
+    free(m->indices);
+    free(m->vert_count);
+    free(m->idx_count);
 }

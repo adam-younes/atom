@@ -9,6 +9,7 @@
 #include <GLES2/gl2.h>
 
 #include <opengl/opengl.h>
+#include <mesh/mesh.h>
 #include <window/xdg-shell-client-protocol.h>
 
 int main(void) {
@@ -88,24 +89,44 @@ int main(void) {
 
     init_glad();
 
+    mesh teapot = { 0 }; 
+    load_mesh("../test/models/obj/teapot.obj", &teapot);
+
     // prepare gl state
     GLuint program = make_program();
     glUseProgram(program);
 
-    GLuint vao; 
-    glGenVertexArrays(1, &vao); 
+    GLuint vao, vbo, ebo;
+    glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
-
-    // triangle vertex data
-    const GLfloat verts[] = {
-        0.0f,  0.6f, 0.0f,
-        -0.5f, -0.4f, 0.0f,
-        0.5f, -0.4f, 0.0f
-    };
-    GLuint vbo;
+    
+    //  ─── positions ───────────────────────────────────────────────────────────────
     glGenBuffers(1, &vbo);
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
+    // our mesh.positions is float[3 * vert_count]
+    glBufferData(GL_ARRAY_BUFFER,
+                 3 * (*teapot.vert_count) * sizeof(float),
+                 teapot.positions,
+                 GL_STATIC_DRAW);
+    
+    // layout(location = 0) in vec3 aPos;
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0,
+                          3, GL_FLOAT, GL_FALSE,
+                          3 * sizeof(float),
+                          (void*)0);
+    
+    //  ─── indices ────────────────────────────────────────────────────────────────
+    glGenBuffers(1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+    // our mesh.indices is uint32_t[idx_count]
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+             (*teapot.idx_count) * sizeof(uint32_t),
+             teapot.indices,
+             GL_STATIC_DRAW);    
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
@@ -129,13 +150,21 @@ int main(void) {
         glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
+        glBindVertexArray(vao);
+
         glUniform1f(angle_loc, angle);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
+        glDrawElements(GL_TRIANGLES, (GLsizei) *teapot.idx_count, GL_UNSIGNED_INT, 0);
 
         eglSwapBuffers(egl_display, egl_surface);
 
         wl_display_flush(wl_display);
     }
+
+    destroy_mesh(&teapot);
+
+    glDeleteBuffers(1, &ebo);
+    glDeleteBuffers(1, &vbo);
+    glDeleteVertexArrays(1, &vao);
 
     // cleanup
     eglDestroySurface(egl_display, egl_surface);
