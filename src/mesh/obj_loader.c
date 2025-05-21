@@ -25,8 +25,7 @@ static uint64_t fnv1a_64(const void *data, size_t length) {
     const uint8_t *bytes = (const uint8_t *)data;
     uint64_t       h     = 14695981039346656037ULL;
     const uint64_t prime = 1099511628211ULL;
-
-    for (size_t i = 0; i < length; i++) {
+for (size_t i = 0; i < length; i++) {
         h ^= (uint64_t)bytes[i];
         h *= prime;
     }
@@ -184,8 +183,7 @@ void at_load_obj(const char *path, mesh *out) {
                     size_t old = ht_capacity;
                     ht_capacity *= 2;
                     hash_table  = realloc(hash_table,
-                                          ht_capacity * sizeof(hash_entry));
-                    memset(hash_table + old, 0,
+                                          ht_capacity * sizeof(hash_entry)); memset(hash_table + old, 0,
                            (ht_capacity - old) * sizeof(hash_entry));
                 }
 

@@ -12,7 +12,7 @@ typedef struct {
     float   znear, zfar;
 } camera;
 
-mat4 look_at(camera *cam); 
+static inline mat4 look_at(camera *cam); 
 mat4 perspective(camera *cam);
 
 #endif

@@ -394,5 +394,92 @@ static inline mat4 mat4_inverse(mat4 m) {
     return inv;
 }
 
+static inline mat4 look_at(vec3 eye, vec3 center, vec3 up) {
+    // forward = normalize(center − eye)
+    vec3 forward = vec3_normalize((vec3){
+        center.x - eye.x,
+        center.y - eye.y,
+        center.z - eye.z
+    });
+
+    // side = normalize(cross(forward, up))
+    vec3 side = vec3_normalize(vec_cross(forward, up));
+
+    // true up = cross(side, forward)
+    vec3 camera_up = vec_cross(side, forward);
+
+    // start from identity
+    mat4 result = mat4_identity();
+
+    // rotation part
+    result.m[0][0] = side.x;
+    result.m[0][1] = side.y;
+    result.m[0][2] = side.z;
+
+    result.m[1][0] = camera_up.x;
+    result.m[1][1] = camera_up.y;
+    result.m[1][2] = camera_up.z;
+
+    result.m[2][0] = -forward.x;
+    result.m[2][1] = -forward.y;
+    result.m[2][2] = -forward.z;
+
+    // translation part (dot of eye with axes)
+    result.m[0][3] = -vec_dot(side, eye);
+    result.m[1][3] = -vec_dot(camera_up, eye);
+    result.m[2][3] =  vec_dot(forward, eye);
+
+    return result;
+}
+
+static inline mat4 perspective_mat4(float fovy_radians,
+                                    float aspect,
+                                    float z_near,
+                                    float z_far)
+{
+    // f = 1 / tan(fov/2)
+    float f = 1.0f / tanf(fovy_radians * 0.5f);
+
+    // zero‐out everything
+    mat4 result = { .m = { { { 0 } } } };
+
+    result.m[0][0] = f / aspect;
+    result.m[1][1] = f;
+    result.m[2][2] = (z_far + z_near) / (z_near - z_far);
+    result.m[2][3] = (2.0f * z_far * z_near) / (z_near - z_far);
+    result.m[3][2] = -1.0f;
+
+    return result;
+}
+
+static inline mat4 translate_mat4(mat4 m, vec3 v) {
+    mat4 t = mat4_identity();
+    t.m[0][3] = v.x;
+    t.m[1][3] = v.y;
+    t.m[2][3] = v.z;
+    return mat_mul(m, t);
+}
+
+// ------------------------------------------------------------
+// rotate_mat4: post‑multiply m by a rotation around `axis`
+// ------------------------------------------------------------
+static inline mat4 rotate_mat4(mat4 m, float angle, vec3 axis) {
+    // normalize axis
+    axis = vec_normalize(axis);
+    float x = axis.x, y = axis.y, z = axis.z;
+    float c = cosf(angle);
+    float s = sinf(angle);
+    float t = 1.0f - c;
+
+    mat4 r = { .m = {
+        { t*x*x + c,   t*x*y - s*z, t*x*z + s*y, 0.0f },
+        { t*x*y + s*z, t*y*y + c,   t*y*z - s*x, 0.0f },
+        { t*x*z - s*y, t*y*z + s*x, t*z*z + c,   0.0f },
+        { 0.0f,        0.0f,        0.0f,        1.0f }
+    }};
+
+    return mat_mul(m, r);
+}
+
 #endif // LA_H
 
