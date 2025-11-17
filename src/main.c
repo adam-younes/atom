@@ -93,6 +93,7 @@ int main(void) {
 
     mesh teapot = { 0 };
     load_mesh("../test/models/obj/teapot.obj", &teapot);
+    generate_normals(&teapot);
 
     fprintf(stderr, "Loaded mesh: %zu vertices, %zu indices\n",
             *teapot.vert_count, *teapot.idx_count);
@@ -145,34 +146,43 @@ int main(void) {
     GLuint program = make_program();
     glUseProgram(program);
 
-    GLint mvp_loc = glGetUniformLocation(program, "uMVP");
+    GLint model_loc   = glGetUniformLocation(program, "uModel");
+    GLint view_loc    = glGetUniformLocation(program, "uView");
+    GLint proj_loc    = glGetUniformLocation(program, "uProj");
+    GLint normal_loc  = glGetUniformLocation(program, "uNormalMat");
+    GLint light_pos_loc   = glGetUniformLocation(program, "uLightPos");
+    GLint view_pos_loc    = glGetUniformLocation(program, "uViewPos");
+    GLint light_color_loc = glGetUniformLocation(program, "uLightColor");
+    GLint object_color_loc = glGetUniformLocation(program, "uObjectColor");
 
-    GLuint vao, vbo, ebo;
+    GLuint vao, vbo_pos, vbo_norm, ebo;
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
-    
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    // our mesh.positions is float[3 * vert_count]
+
+    glGenBuffers(1, &vbo_pos);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_pos);
     glBufferData(GL_ARRAY_BUFFER,
                  3 * (*teapot.vert_count) * sizeof(float),
                  teapot.positions,
                  GL_STATIC_DRAW);
-    
-    // layout(location = 0) in vec3 aPos;
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0,
-                          3, GL_FLOAT, GL_FALSE,
-                          3 * sizeof(float),
-                          (void*)0);
-    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
+    glGenBuffers(1, &vbo_norm);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_norm);
+    glBufferData(GL_ARRAY_BUFFER,
+                 3 * (*teapot.vert_count) * sizeof(float),
+                 teapot.normals,
+                 GL_STATIC_DRAW);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+
     glGenBuffers(1, &ebo);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-    // our mesh.indices is uint32_t[idx_count]
     glBufferData(GL_ELEMENT_ARRAY_BUFFER,
-             (*teapot.idx_count) * sizeof(uint32_t),
-             teapot.indices,
-             GL_STATIC_DRAW);    
+                 (*teapot.idx_count) * sizeof(uint32_t),
+                 teapot.indices,
+                 GL_STATIC_DRAW);
 
     glBindVertexArray(0);
 
@@ -180,7 +190,18 @@ int main(void) {
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
 
-    // enter mainloop 
+    vec3 light_pos    = { -5.0f, 5.0f, 5.0f };
+    vec3 camera_pos   = { 0.0f, 0.0f, cam_d };
+    vec3 light_color  = { 3.0f, 3.0f, 3.0f };
+    vec3 object_color = { 1.0f, 0.75f, 0.2f };
+
+    glUseProgram(program);
+    glUniform3fv(light_pos_loc, 1, &light_pos.x);
+    glUniform3fv(view_pos_loc, 1, &camera_pos.x);
+    glUniform3fv(light_color_loc, 1, &light_color.x);
+    glUniform3fv(object_color_loc, 1, &object_color.x);
+
+    // enter mainloop
     struct timespec last_t; clock_gettime(CLOCK_MONOTONIC, &last_t);
     float angle = 0.0f;
 
@@ -192,12 +213,11 @@ int main(void) {
         last_t = now;
         angle += dt;
 
-        // Build model matrix: translate to center at origin, then rotate around origin
         mat4 model = mat4_identity();
-        model = translate_mat4(model, vec_negate(center));  // center teapot at origin first
-        model = rotate_mat4(model, angle, (vec3){ 0.0f, 1.0f, 0.0f });  // then rotate
+        model = translate_mat4(model, vec_negate(center));
+        model = rotate_mat4(model, angle, (vec3){ 0.0f, 1.0f, 0.0f });
 
-        mat4 mvp = mat_mul(proj, mat_mul(view, model));
+        mat4 normal_mat = mat4_transpose(mat4_inverse(model));
 
         // render
         glViewport(0, 0, width, height);
@@ -205,7 +225,10 @@ int main(void) {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(program);
-        glUniformMatrix4fv(mvp_loc, 1, GL_TRUE, &mvp.m[0][0]);
+        glUniformMatrix4fv(model_loc, 1, GL_TRUE, &model.m[0][0]);
+        glUniformMatrix4fv(view_loc, 1, GL_TRUE, &view.m[0][0]);
+        glUniformMatrix4fv(proj_loc, 1, GL_TRUE, &proj.m[0][0]);
+        glUniformMatrix4fv(normal_loc, 1, GL_TRUE, &normal_mat.m[0][0]);
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, (GLsizei) *teapot.idx_count, GL_UNSIGNED_INT, 0);
 
@@ -216,7 +239,8 @@ int main(void) {
     destroy_mesh(&teapot);
 
     glDeleteBuffers(1, &ebo);
-    glDeleteBuffers(1, &vbo);
+    glDeleteBuffers(1, &vbo_norm);
+    glDeleteBuffers(1, &vbo_pos);
     glDeleteVertexArrays(1, &vao);
 
     // cleanup

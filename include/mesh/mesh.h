@@ -17,6 +17,8 @@ void load_mesh(const char *path, mesh *out);
 
 extern void load_obj(const char *path, mesh *out);
 
+void generate_normals(mesh *m);
+
 void destroy_mesh(mesh *m);
 
 #endif

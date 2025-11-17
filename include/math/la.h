@@ -441,7 +441,7 @@ static inline mat4 perspective_mat4(float fovy_radians,
     float f = 1.0f / tanf(fovy_radians * 0.5f);
 
     // zero‐out everything
-    mat4 result = { .m = { { { 0 } } } };
+    mat4 result = {0};
 
     result.m[0][0] = f / aspect;
     result.m[1][1] = f;
