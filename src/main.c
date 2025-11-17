@@ -91,8 +91,11 @@ int main(void) {
 
     init_glad();
 
-    mesh teapot = { 0 }; 
+    mesh teapot = { 0 };
     load_mesh("../test/models/obj/teapot.obj", &teapot);
+
+    fprintf(stderr, "Loaded mesh: %zu vertices, %zu indices\n",
+            *teapot.vert_count, *teapot.idx_count);
 
     // bounding box initialization
     vec3 bb_min = {  FLT_MAX,  FLT_MAX,  FLT_MAX };
@@ -121,19 +124,21 @@ int main(void) {
 
     float radius = 0.5f * vec_length(diag);
 
-    float fov   = to_radians(60.0f);
-    float cam_d = radius / tanf(fov * 0.5f);
+    float fov   = to_radians(45.0f);
+    // Add 1.5x padding factor to ensure entire object is visible
+    float cam_d = (radius * 1.5f) / tanf(fov * 0.5f);
 
+    // Position camera to look at the centered teapot
     mat4 view = look_at(
-        (vec3){ 0.0f, 0.0f,  cam_d },
-        (vec3){ 0.0f, 0.0f, 0.0f }, 
-        (vec3){ 0.0f, 1.0f,  0.0f }
+        (vec3){ 0.0f, 0.0f,  cam_d },   // camera position (back from origin)
+        (vec3){ 0.0f, 0.0f,  0.0f },     // looking at origin
+        (vec3){ 0.0f, 1.0f,  0.0f }      // up vector
     );
     mat4 proj = perspective_mat4(
-        to_radians(45.0f),
+        fov,
         (float)width / (float)height,
         0.1f,
-        radius * 10.0f               // far plane sufficiently beyond object
+        cam_d + radius * 2.0f        // far plane beyond camera + object
     );
 
     // prepare gl state
@@ -170,12 +175,10 @@ int main(void) {
              GL_STATIC_DRAW);    
 
     glBindVertexArray(0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
-
-    GLint angle_loc = glGetUniformLocation(program, "uAngle");
+    // enable depth testing for proper 3D rendering
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
 
     // enter mainloop 
     struct timespec last_t; clock_gettime(CLOCK_MONOTONIC, &last_t);
@@ -189,10 +192,10 @@ int main(void) {
         last_t = now;
         angle += dt;
 
-        mat4 model = mat4_identity(); 
-        model = translate_mat4(model, vec_negate(center)); 
-        model = translate_mat4(model, (vec3){ 0.0f, 0.0f, -radius * 1.5f });
-        model = rotate_mat4(model, angle, (vec3){ 0.0f, 1.0f, 0.0f });
+        // Build model matrix: translate to center at origin, then rotate around origin
+        mat4 model = mat4_identity();
+        model = translate_mat4(model, vec_negate(center));  // center teapot at origin first
+        model = rotate_mat4(model, angle, (vec3){ 0.0f, 1.0f, 0.0f });  // then rotate
 
         mat4 mvp = mat_mul(proj, mat_mul(view, model));
 
@@ -201,8 +204,8 @@ int main(void) {
         glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glUseProgram(program); 
-        glUniformMatrix4fv(mvp_loc, 1, GL_FALSE, &mvp.m[0][0]);
+        glUseProgram(program);
+        glUniformMatrix4fv(mvp_loc, 1, GL_TRUE, &mvp.m[0][0]);
         glBindVertexArray(vao);
         glDrawElements(GL_TRIANGLES, (GLsizei) *teapot.idx_count, GL_UNSIGNED_INT, 0);
 

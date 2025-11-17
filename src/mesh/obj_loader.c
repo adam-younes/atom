@@ -180,11 +180,31 @@ void at_load_obj(const char *path, mesh *out) {
 
                 uint32_t vertex_index;
                 if (unique_vertices * 2 > ht_capacity) {
-                    size_t old = ht_capacity;
+                    // save old entries
+                    size_t old_capacity = ht_capacity;
+                    hash_entry *old_table = hash_table;
+
+                    // allocate new table
                     ht_capacity *= 2;
-                    hash_table  = realloc(hash_table,
-                                          ht_capacity * sizeof(hash_entry)); memset(hash_table + old, 0,
-                           (ht_capacity - old) * sizeof(hash_entry));
+                    hash_table = calloc(ht_capacity, sizeof(hash_entry));
+
+                    // rehash all existing entries
+                    for (size_t i = 0; i < old_capacity; i++) {
+                        if (old_table[i].hash) {
+                            uint64_t hash = old_table[i].hash;
+                            size_t idx = hash % ht_capacity;
+                            size_t step = 1;
+
+                            while (hash_table[idx].hash) {
+                                idx = (idx + step * step) % ht_capacity;
+                                step++;
+                            }
+
+                            hash_table[idx] = old_table[i];
+                        }
+                    }
+
+                    free(old_table);
                 }
 
                 bool is_new = ht_insert(hash_table,
