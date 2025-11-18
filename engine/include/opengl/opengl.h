@@ -15,8 +15,8 @@ static EGLContext  egl_context  = EGL_NO_CONTEXT;
 static EGLSurface  egl_surface  = EGL_NO_SURFACE;
 
 // window size
-static int width  = 1080;
-static int height = 1080;
+extern int width;
+extern int height;
 
 static char *load_shader_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -58,7 +58,7 @@ static GLuint compile_shader(GLenum type, const char *src) {
     return sh;
 }
 
-static GLuint make_program_from_files(const char *vs_path, const char *fs_path) {
+GLuint make_program_from_files(const char *vs_path, const char *fs_path) {
     char *vs_source = load_shader_file(vs_path);
     char *fs_source = load_shader_file(fs_path);
     if (!vs_source || !fs_source) {

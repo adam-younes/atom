@@ -1,10 +1,11 @@
 #ifndef ATOM_COMPONENTS_H
 #define ATOM_COMPONENTS_H
 
+#include <stdint.h>
+#include <stdbool.h>
 #include <atom/entity.h>
 #include <math/la.h>
 #include <mesh/mesh.h>
-#include <stdint.h>
 
 typedef struct {
   entity_id entity;
@@ -21,10 +22,10 @@ typedef struct {
   entity_id entity;
   mesh *mesh_data;
   uint32_t material_id;
-  GLuint vao;
-  GLuint vbo_pos;
-  GLuint vbo_norm;
-  GLuint ebo;
+  uint32_t vao;
+  uint32_t vbo_pos;
+  uint32_t vbo_norm;
+  uint32_t ebo;
   bool initialized;
 } mesh_renderer_component;
 

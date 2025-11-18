@@ -64,13 +64,40 @@ void generate_normals_smooth(mesh *m) {
     m->normals[3*i2+0] += n.x; m->normals[3*i2+1] += n.y; m->normals[3*i2+2] += n.z;
   }
 
+  float *averaged_normals = calloc(vc * 3, sizeof(float));
+
   for (size_t i = 0; i < vc; i++) {
-    vec3 n = { m->normals[3*i+0], m->normals[3*i+1], m->normals[3*i+2] };
+    vec3 pos_i = { m->positions[3*i+0], m->positions[3*i+1], m->positions[3*i+2] };
+    vec3 normal_sum = { m->normals[3*i+0], m->normals[3*i+1], m->normals[3*i+2] };
+
+    for (size_t j = 0; j < vc; j++) {
+      if (i == j) continue;
+
+      vec3 pos_j = { m->positions[3*j+0], m->positions[3*j+1], m->positions[3*j+2] };
+      vec3 diff = vec_sum(pos_i, vec_negate(pos_j));
+      float dist_sq = vec_dot(diff, diff);
+
+      if (dist_sq < 1e-6f) {
+        normal_sum.x += m->normals[3*j+0];
+        normal_sum.y += m->normals[3*j+1];
+        normal_sum.z += m->normals[3*j+2];
+      }
+    }
+
+    averaged_normals[3*i+0] = normal_sum.x;
+    averaged_normals[3*i+1] = normal_sum.y;
+    averaged_normals[3*i+2] = normal_sum.z;
+  }
+
+  for (size_t i = 0; i < vc; i++) {
+    vec3 n = { averaged_normals[3*i+0], averaged_normals[3*i+1], averaged_normals[3*i+2] };
     n = vec_normalize(n);
     m->normals[3*i+0] = n.x;
     m->normals[3*i+1] = n.y;
     m->normals[3*i+2] = n.z;
   }
+
+  free(averaged_normals);
 }
 
 void generate_normals_flat(mesh *m) {

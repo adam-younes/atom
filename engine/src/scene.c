@@ -1,6 +1,6 @@
+#include <opengl/glad.h>
 #include <atom/scene.h>
 #include <math/trig.h>
-#include <GLES2/gl2.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
