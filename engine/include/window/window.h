@@ -1,7 +1,10 @@
 #include <wayland-client.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <window/xdg-shell-client-protocol.h>
+#include <linux/input-event-codes.h>
+#include <atom/input.h>
 
 static bool running = true;
 
@@ -13,21 +16,104 @@ static struct xdg_wm_base       *xdg_wm_base   = NULL;
 static struct wl_surface        *wl_surface    = NULL;
 static struct xdg_surface       *xdg_surface   = NULL;
 static struct xdg_toplevel      *xdg_toplevel  = NULL;
+static struct wl_seat           *wl_seat       = NULL;
+static struct wl_keyboard       *wl_keyboard   = NULL;
 
 // wayland listeners
+static key_code linux_keycode_to_key_code(uint32_t key) {
+  switch (key) {
+    case 17: return ATOM_KEY_W;
+    case 30: return ATOM_KEY_A;
+    case 31: return ATOM_KEY_S;
+    case 32: return ATOM_KEY_D;
+    case 16: return ATOM_KEY_Q;
+    case 18: return ATOM_KEY_E;
+    case 57: return ATOM_KEY_SPACE;
+    case 42:
+    case 54: return ATOM_KEY_SHIFT;
+    case 1: return ATOM_KEY_ESC;
+    default: return ATOM_KEY_COUNT;
+  }
+}
+
+static void keyboard_key(void *data, struct wl_keyboard *kb, uint32_t serial,
+                         uint32_t time, uint32_t key, uint32_t state) {
+  (void)data; (void)kb; (void)serial; (void)time;
+  key_code code = linux_keycode_to_key_code(key);
+  if (code != ATOM_KEY_COUNT) {
+    input_set_key_state(code, state == WL_KEYBOARD_KEY_STATE_PRESSED);
+  }
+}
+
+static void keyboard_keymap(void *data, struct wl_keyboard *kb, uint32_t format,
+                            int32_t fd, uint32_t size) {
+  (void)data; (void)kb; (void)format; (void)fd; (void)size;
+}
+
+static void keyboard_enter(void *data, struct wl_keyboard *kb, uint32_t serial,
+                          struct wl_surface *surface, struct wl_array *keys) {
+  (void)data; (void)kb; (void)serial; (void)surface; (void)keys;
+}
+
+static void keyboard_leave(void *data, struct wl_keyboard *kb, uint32_t serial,
+                          struct wl_surface *surface) {
+  (void)data; (void)kb; (void)serial; (void)surface;
+}
+
+static void keyboard_modifiers(void *data, struct wl_keyboard *kb, uint32_t serial,
+                               uint32_t mods_depressed, uint32_t mods_latched,
+                               uint32_t mods_locked, uint32_t group) {
+  (void)data; (void)kb; (void)serial; (void)mods_depressed;
+  (void)mods_latched; (void)mods_locked; (void)group;
+}
+
+static void keyboard_repeat_info(void *data, struct wl_keyboard *kb,
+                                 int32_t rate, int32_t delay) {
+  (void)data; (void)kb; (void)rate; (void)delay;
+}
+
+static const struct wl_keyboard_listener keyboard_listener = {
+  .keymap = keyboard_keymap,
+  .enter = keyboard_enter,
+  .leave = keyboard_leave,
+  .key = keyboard_key,
+  .modifiers = keyboard_modifiers,
+  .repeat_info = keyboard_repeat_info,
+};
+
+static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
+  (void)data;
+  if (caps & WL_SEAT_CAPABILITY_KEYBOARD) {
+    wl_keyboard = wl_seat_get_keyboard(seat);
+    wl_keyboard_add_listener(wl_keyboard, &keyboard_listener, NULL);
+  }
+}
+
+static void seat_name(void *data, struct wl_seat *seat, const char *name) {
+  (void)data; (void)seat; (void)name;
+}
+
+static const struct wl_seat_listener seat_listener = {
+  .capabilities = seat_capabilities,
+  .name = seat_name,
+};
+
 static void registry_global(void *data,
                             struct wl_registry *reg,
                             uint32_t name,
                             const char *iface,
                             uint32_t version)
 {
+  (void)data; (void)version;
   if (strcmp(iface, wl_compositor_interface.name) == 0) {
-    wl_compositor = wl_registry_bind(reg, name,
-                                     &wl_compositor_interface, 1);
+    wl_compositor = wl_registry_bind(reg, name, &wl_compositor_interface, 1);
   }
   else if (strcmp(iface, xdg_wm_base_interface.name) == 0) {
-    xdg_wm_base = wl_registry_bind(reg, name,
-                                   &xdg_wm_base_interface, 1);
+    xdg_wm_base = wl_registry_bind(reg, name, &xdg_wm_base_interface, 1);
+  }
+  else if (strcmp(iface, wl_seat_interface.name) == 0) {
+    wl_seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
+    wl_seat_add_listener(wl_seat, &seat_listener, NULL);
   }
 }
 
@@ -37,40 +123,36 @@ static const struct wl_registry_listener registry_listener = {
 };
 
 static void xdg_wm_base_ping(void *d, struct xdg_wm_base *base, uint32_t serial) {
+  (void)d;
   xdg_wm_base_pong(base, serial);
 }
+
 static const struct xdg_wm_base_listener wm_base_listener = {
   .ping = xdg_wm_base_ping
 };
 
-static void xdg_surface_configure(void *data,
-                                  struct xdg_surface *surf,
-                                  uint32_t serial)
-{
-  // ack configure and redraw
+static void xdg_surface_configure(void *data, struct xdg_surface *surf, uint32_t serial) {
+  (void)data;
   xdg_surface_ack_configure(surf, serial);
   wl_surface_commit(wl_surface);
 }
+
 static const struct xdg_surface_listener xdg_surface_listener = {
   .configure = xdg_surface_configure
 };
 
-// forward‐declare your configure handler if you already have one:
-static void handle_toplevel_configure(void *data,
-                                      struct xdg_toplevel *toplevel,
+static void handle_toplevel_configure(void *data, struct xdg_toplevel *toplevel,
                                       int32_t width, int32_t height,
                                       struct wl_array *states) {
+  (void)data; (void)toplevel; (void)width; (void)height; (void)states;
 }
 
-// close handler
-static void handle_toplevel_close(void *data,
-                                  struct xdg_toplevel *toplevel)
-{
+static void handle_toplevel_close(void *data, struct xdg_toplevel *toplevel) {
+  (void)data; (void)toplevel;
   running = false;
 }
 
-// bind both handlers:
 static const struct xdg_toplevel_listener toplevel_listener = {
   .configure = handle_toplevel_configure,
-  .close     = handle_toplevel_close,
+  .close = handle_toplevel_close,
 };

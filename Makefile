@@ -7,7 +7,7 @@ BINDIR = bin
 ENGINE_LIB = $(BINDIR)/libatom.a
 GAME_TARGET = $(BINDIR)/atom_game
 
-ENGINE_SRCS = engine/src/engine.c engine/src/entity.c engine/src/scene.c engine/src/mesh/mesh.c engine/src/mesh/obj_loader.c engine/src/opengl/glad.c engine/src/window/xdg-shell-protocol.c
+ENGINE_SRCS = engine/src/engine.c engine/src/entity.c engine/src/scene.c engine/src/input.c engine/src/camera_controller.c engine/src/mesh/mesh.c engine/src/mesh/obj_loader.c engine/src/opengl/opengl.c engine/src/opengl/shader.c engine/src/opengl/glad.c engine/src/window/xdg-shell-protocol.c
 ENGINE_OBJS = $(ENGINE_SRCS:engine/src/%.c=$(BINDIR)/obj/engine/%.o)
 
 GAME_SRCS = game/src/main.c

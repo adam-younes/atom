@@ -7,6 +7,7 @@
 #include <EGL/egl.h>
 
 #include <atom/engine.h>
+#include <atom/input.h>
 #include <window/window.h>
 #include <window/xdg-shell-client-protocol.h>
 #include <opengl/opengl.h>
@@ -78,6 +79,8 @@ int atom_run(atom_config *config, atom_callbacks *callbacks) {
 
   init_glad();
 
+  input_init();
+
   if (callbacks->init) {
     callbacks->init();
   }
@@ -90,6 +93,8 @@ int atom_run(atom_config *config, atom_callbacks *callbacks) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     float dt = (now.tv_sec - last_t.tv_sec) + (now.tv_nsec - last_t.tv_nsec) * 1e-9f;
     last_t = now;
+
+    input_update(dt);
 
     if (callbacks->update) {
       callbacks->update(dt);

@@ -4,6 +4,8 @@
 #include <GLES2/gl2.h>
 #include <atom/engine.h>
 #include <atom/scene.h>
+#include <atom/input.h>
+#include <atom/camera_controller.h>
 #include <math/la.h>
 #include <math/trig.h>
 #include <mesh/mesh.h>
@@ -14,12 +16,21 @@ static mesh teapot_mesh;
 static entity_id teapot_entity;
 static entity_id camera_entity;
 static entity_id light_entity;
+static camera_controller cam_controller;
+static vec3 camera_target;
 
 static GLuint program;
 GLint model_loc, view_loc, proj_loc, normal_loc;
 static GLint light_pos_loc, view_pos_loc, light_color_loc, object_color_loc;
 
 extern int width, height;
+
+static void cam_move_forward(float dt);
+static void cam_move_backward(float dt);
+static void cam_move_left(float dt);
+static void cam_move_right(float dt);
+static void cam_move_up(float dt);
+static void cam_move_down(float dt);
 
 void game_init(void) {
   load_mesh("./test/models/obj/teapot.obj", &teapot_mesh);
@@ -145,13 +156,76 @@ void game_init(void) {
   glUniform3fv(view_pos_loc, 1, &cam_t->position.x);
   glUniform3fv(light_color_loc, 1, &light->color.x);
   glUniform3fv(object_color_loc, 1, &object_color.x);
+
+  camera_target = (vec3){0, 0, 0};
+  camera_controller_init(&cam_controller, &game_scene, camera_entity);
+
+  input_bind_key(ATOM_KEY_W, NULL, cam_move_forward, NULL);
+  input_bind_key(ATOM_KEY_S, NULL, cam_move_backward, NULL);
+  input_bind_key(ATOM_KEY_A, NULL, cam_move_left, NULL);
+  input_bind_key(ATOM_KEY_D, NULL, cam_move_right, NULL);
+  input_bind_key(ATOM_KEY_SPACE, NULL, cam_move_up, NULL);
+  input_bind_key(ATOM_KEY_Q, NULL, cam_move_down, NULL);
+}
+
+static void cam_move_forward(float dt) {
+  camera_controller_move_forward(&cam_controller, dt);
+  float speed = cam_controller.move_speed * dt;
+  if (input_is_key_pressed(ATOM_KEY_SHIFT)) speed *= cam_controller.sprint_multiplier;
+  camera_target.z -= speed;
+}
+
+static void cam_move_backward(float dt) {
+  camera_controller_move_backward(&cam_controller, dt);
+  float speed = cam_controller.move_speed * dt;
+  if (input_is_key_pressed(ATOM_KEY_SHIFT)) speed *= cam_controller.sprint_multiplier;
+  camera_target.z += speed;
+}
+
+static void cam_move_left(float dt) {
+  camera_controller_move_left(&cam_controller, dt);
+  float speed = cam_controller.move_speed * dt;
+  if (input_is_key_pressed(ATOM_KEY_SHIFT)) speed *= cam_controller.sprint_multiplier;
+  camera_target.x -= speed;
+}
+
+static void cam_move_right(float dt) {
+  camera_controller_move_right(&cam_controller, dt);
+  float speed = cam_controller.move_speed * dt;
+  if (input_is_key_pressed(ATOM_KEY_SHIFT)) speed *= cam_controller.sprint_multiplier;
+  camera_target.x += speed;
+}
+
+static void cam_move_up(float dt) {
+  camera_controller_move_up(&cam_controller, dt);
+  float speed = cam_controller.move_speed * dt;
+  if (input_is_key_pressed(ATOM_KEY_SHIFT)) speed *= cam_controller.sprint_multiplier;
+  camera_target.y += speed;
+}
+
+static void cam_move_down(float dt) {
+  camera_controller_move_down(&cam_controller, dt);
+  float speed = cam_controller.move_speed * dt;
+  if (input_is_key_pressed(ATOM_KEY_SHIFT)) speed *= cam_controller.sprint_multiplier;
+  camera_target.y -= speed;
 }
 
 void game_update(float dt) {
+
   transform_component *t = scene_get_transform(&game_scene, teapot_entity);
   if (t) {
     t->rotation.y += dt;
     t->dirty = true;
+  }
+
+  transform_component *cam_t = scene_get_transform(&game_scene, camera_entity);
+  camera_component *cam = scene_get_camera(&game_scene, camera_entity);
+  if (cam_t && cam) {
+    cam->view_matrix = look_at(
+      cam_t->position,
+      camera_target,
+      (vec3){0, 1, 0}
+    );
   }
 
   scene_update_transforms(&game_scene);
