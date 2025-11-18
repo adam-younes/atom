@@ -92,7 +92,7 @@ int main(void) {
     init_glad();
 
     mesh teapot = { 0 };
-    load_mesh("../test/models/obj/teapot.obj", &teapot);
+    load_mesh("./test/models/obj/teapot.obj", &teapot);
     generate_normals(&teapot);
 
     fprintf(stderr, "Loaded mesh: %zu vertices, %zu indices\n",

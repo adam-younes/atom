@@ -460,9 +460,6 @@ static inline mat4 translate_mat4(mat4 m, vec3 v) {
     return mat_mul(m, t);
 }
 
-// ------------------------------------------------------------
-// rotate_mat4: post‑multiply m by a rotation around `axis`
-// ------------------------------------------------------------
 static inline mat4 rotate_mat4(mat4 m, float angle, vec3 axis) {
     // normalize axis
     axis = vec_normalize(axis);
