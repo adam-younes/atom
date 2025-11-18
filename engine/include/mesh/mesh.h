@@ -5,12 +5,12 @@
 
 // struct for mesh data
 typedef struct {
-    float     *positions;
-    float     *normals; 
-    float     *texcoords; 
-    uint32_t  *indices; 
-    size_t    *vert_count;
-    size_t    *idx_count;
+  float     *positions;
+  float     *normals; 
+  float     *texcoords; 
+  uint32_t  *indices; 
+  size_t    *vert_count;
+  size_t    *idx_count;
 } mesh;
 
 void load_mesh(const char *path, mesh *out);
@@ -18,6 +18,8 @@ void load_mesh(const char *path, mesh *out);
 extern void load_obj(const char *path, mesh *out);
 
 void generate_normals(mesh *m);
+void generate_normals_smooth(mesh *m);
+void generate_normals_flat(mesh *m);
 
 void destroy_mesh(mesh *m);
 

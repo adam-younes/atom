@@ -4,12 +4,12 @@
 #include <math/la.h>
 
 typedef struct {
-    vec3    position;
-    vec3    target; 
-    vec3    up;
-    float   fov_y;
-    float   aspect;
-    float   znear, zfar;
+  vec3    position;
+  vec3    target; 
+  vec3    up;
+  float   fov_y;
+  float   aspect;
+  float   znear, zfar;
 } camera;
 
 static inline mat4 look_at(camera *cam); 

@@ -8,76 +8,110 @@
 typedef void (*mesh_loader)(const char *, mesh *); 
 
 static const struct {
-    const char  *ext;
-    mesh_loader fun;
+  const char  *ext;
+  mesh_loader fun;
 } loaders[] = {
-    { "obj", load_obj },
-    { NULL , NULL     }
+  { "obj", load_obj },
+  { NULL , NULL     }
 };
 
 void load_mesh(const char *path, mesh *out) {
-    const char *dot = strrchr(path, '.');
-    if (!dot || dot == path) {
-        fprintf(stderr, "load_mesh: no valid extension on '%s'\n", path);
-        return;
+  const char *dot = strrchr(path, '.');
+  if (!dot || dot == path) {
+    fprintf(stderr, "load_mesh: no valid extension on '%s'\n", path);
+    return;
+  }
+
+  const char *ext = dot + 1;
+
+  uint8_t i;
+  for (i = 0 ; loaders[i].ext ; i++) {
+    if (strcmp(ext, loaders[i].ext) == 0) {
+      loaders[i].fun(path, out); 
+      return;
     }
+  }
 
-    const char *ext = dot + 1;
+  fprintf(stderr, "Unsupported file format '.%s'\n", ext);
+}
 
-    uint8_t i;
-    for (i = 0 ; loaders[i].ext ; i++) {
-        if (strcmp(ext, loaders[i].ext) == 0) {
-            loaders[i].fun(path, out); 
-            return;
-        }
-    }
+void generate_normals_smooth(mesh *m) {
+  if (!m->positions || !m->indices || !m->vert_count || !m->idx_count) {
+    return;
+  }
 
-    fprintf(stderr, "Unsupported file format '.%s'\n", ext);
+  size_t vc = *m->vert_count;
+  size_t ic = *m->idx_count;
+
+  if (m->normals) free(m->normals);
+  m->normals = calloc(vc * 3, sizeof(float));
+
+  for (size_t i = 0; i < ic; i += 3) {
+    uint32_t i0 = m->indices[i + 0];
+    uint32_t i1 = m->indices[i + 1];
+    uint32_t i2 = m->indices[i + 2];
+
+    vec3 v0 = { m->positions[3*i0+0], m->positions[3*i0+1], m->positions[3*i0+2] };
+    vec3 v1 = { m->positions[3*i1+0], m->positions[3*i1+1], m->positions[3*i1+2] };
+    vec3 v2 = { m->positions[3*i2+0], m->positions[3*i2+1], m->positions[3*i2+2] };
+
+    vec3 e1 = vec_sum(v1, vec_negate(v0));
+    vec3 e2 = vec_sum(v2, vec_negate(v0));
+    vec3 n = vec_cross(e1, e2);
+
+    m->normals[3*i0+0] += n.x; m->normals[3*i0+1] += n.y; m->normals[3*i0+2] += n.z;
+    m->normals[3*i1+0] += n.x; m->normals[3*i1+1] += n.y; m->normals[3*i1+2] += n.z;
+    m->normals[3*i2+0] += n.x; m->normals[3*i2+1] += n.y; m->normals[3*i2+2] += n.z;
+  }
+
+  for (size_t i = 0; i < vc; i++) {
+    vec3 n = { m->normals[3*i+0], m->normals[3*i+1], m->normals[3*i+2] };
+    n = vec_normalize(n);
+    m->normals[3*i+0] = n.x;
+    m->normals[3*i+1] = n.y;
+    m->normals[3*i+2] = n.z;
+  }
+}
+
+void generate_normals_flat(mesh *m) {
+  if (!m->positions || !m->indices || !m->vert_count || !m->idx_count) {
+    return;
+  }
+
+  size_t vc = *m->vert_count;
+  size_t ic = *m->idx_count;
+
+  if (m->normals) free(m->normals);
+  m->normals = calloc(vc * 3, sizeof(float));
+
+  for (size_t i = 0; i < ic; i += 3) {
+    uint32_t i0 = m->indices[i + 0];
+    uint32_t i1 = m->indices[i + 1];
+    uint32_t i2 = m->indices[i + 2];
+
+    vec3 v0 = { m->positions[3*i0+0], m->positions[3*i0+1], m->positions[3*i0+2] };
+    vec3 v1 = { m->positions[3*i1+0], m->positions[3*i1+1], m->positions[3*i1+2] };
+    vec3 v2 = { m->positions[3*i2+0], m->positions[3*i2+1], m->positions[3*i2+2] };
+
+    vec3 e1 = vec_sum(v1, vec_negate(v0));
+    vec3 e2 = vec_sum(v2, vec_negate(v0));
+    vec3 n = vec_normalize(vec_cross(e1, e2));
+
+    m->normals[3*i0+0] = n.x; m->normals[3*i0+1] = n.y; m->normals[3*i0+2] = n.z;
+    m->normals[3*i1+0] = n.x; m->normals[3*i1+1] = n.y; m->normals[3*i1+2] = n.z;
+    m->normals[3*i2+0] = n.x; m->normals[3*i2+1] = n.y; m->normals[3*i2+2] = n.z;
+  }
 }
 
 void generate_normals(mesh *m) {
-    if (!m->positions || !m->indices || !m->vert_count || !m->idx_count) {
-        return;
-    }
-
-    size_t vc = *m->vert_count;
-    size_t ic = *m->idx_count;
-
-    if (m->normals) free(m->normals);
-    m->normals = calloc(vc * 3, sizeof(float));
-
-    for (size_t i = 0; i < ic; i += 3) {
-        uint32_t i0 = m->indices[i + 0];
-        uint32_t i1 = m->indices[i + 1];
-        uint32_t i2 = m->indices[i + 2];
-
-        vec3 v0 = { m->positions[3*i0+0], m->positions[3*i0+1], m->positions[3*i0+2] };
-        vec3 v1 = { m->positions[3*i1+0], m->positions[3*i1+1], m->positions[3*i1+2] };
-        vec3 v2 = { m->positions[3*i2+0], m->positions[3*i2+1], m->positions[3*i2+2] };
-
-        vec3 e1 = vec_sum(v1, vec_negate(v0));
-        vec3 e2 = vec_sum(v2, vec_negate(v0));
-        vec3 n = vec_cross(e1, e2);
-
-        m->normals[3*i0+0] += n.x; m->normals[3*i0+1] += n.y; m->normals[3*i0+2] += n.z;
-        m->normals[3*i1+0] += n.x; m->normals[3*i1+1] += n.y; m->normals[3*i1+2] += n.z;
-        m->normals[3*i2+0] += n.x; m->normals[3*i2+1] += n.y; m->normals[3*i2+2] += n.z;
-    }
-
-    for (size_t i = 0; i < vc; i++) {
-        vec3 n = { m->normals[3*i+0], m->normals[3*i+1], m->normals[3*i+2] };
-        n = vec_normalize(n);
-        m->normals[3*i+0] = n.x;
-        m->normals[3*i+1] = n.y;
-        m->normals[3*i+2] = n.z;
-    }
+  generate_normals_smooth(m);
 }
 
 void destroy_mesh(mesh *m) {
-    free(m->positions);
-    free(m->normals);
-    free(m->texcoords);
-    free(m->indices);
-    free(m->vert_count);
-    free(m->idx_count);
+  free(m->positions);
+  free(m->normals);
+  free(m->texcoords);
+  free(m->indices);
+  free(m->vert_count);
+  free(m->idx_count);
 }

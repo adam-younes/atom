@@ -8,7 +8,7 @@ uniform mat4 uProj;
 uniform mat4 uNormalMat;
 
 out vec3 FragPos;
-out vec3 Normal;
+flat out vec3 Normal;
 
 void main() {
   FragPos = vec3(uModel * vec4(aPos, 1.0));
