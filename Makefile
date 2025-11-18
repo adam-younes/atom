@@ -1,27 +1,37 @@
 CC = gcc
-CFLAGS = -O2 -std=c99 -I./include -Wall -Wextra
+CFLAGS = -O2 -std=c99 -Wall -Wextra
 PKG = $(shell pkg-config --cflags --libs wayland-client wayland-egl egl glesv2)
 LDFLAGS = -lm
 
 BINDIR = bin
-TARGET = $(BINDIR)/atom
+ENGINE_LIB = $(BINDIR)/libatom.a
+GAME_TARGET = $(BINDIR)/atom_game
 
-SRCS = src/main.c src/mesh/mesh.c src/mesh/obj_loader.c src/opengl/glad.c src/window/xdg-shell-protocol.c
-OBJS = $(SRCS:src/%.c=$(BINDIR)/obj/%.o)
+ENGINE_SRCS = engine/src/engine.c engine/src/mesh/mesh.c engine/src/mesh/obj_loader.c engine/src/opengl/glad.c engine/src/window/xdg-shell-protocol.c
+ENGINE_OBJS = $(ENGINE_SRCS:engine/src/%.c=$(BINDIR)/obj/engine/%.o)
 
-all: $(TARGET)
+GAME_SRCS = game/src/main.c
+GAME_OBJS = $(GAME_SRCS:game/src/%.c=$(BINDIR)/obj/game/%.o)
 
-$(TARGET): $(OBJS) | $(BINDIR)
-	$(CC) $(CFLAGS) $^ -o $@ $(PKG) $(LDFLAGS)
+all: $(GAME_TARGET)
 
-$(BINDIR)/obj/%.o: src/%.c | $(BINDIR)/obj $(BINDIR)/obj/mesh $(BINDIR)/obj/opengl $(BINDIR)/obj/window
-	$(CC) $(CFLAGS) -c $< -o $@
+$(ENGINE_LIB): $(ENGINE_OBJS) | $(BINDIR)
+	ar rcs $@ $^
 
-$(BINDIR) $(BINDIR)/obj $(BINDIR)/obj/mesh $(BINDIR)/obj/opengl $(BINDIR)/obj/window:
+$(GAME_TARGET): $(GAME_OBJS) $(ENGINE_LIB) | $(BINDIR)
+	$(CC) $(CFLAGS) $(GAME_OBJS) -o $@ -L$(BINDIR) -latom $(PKG) $(LDFLAGS)
+
+$(BINDIR)/obj/engine/%.o: engine/src/%.c | $(BINDIR)/obj/engine $(BINDIR)/obj/engine/mesh $(BINDIR)/obj/engine/opengl $(BINDIR)/obj/engine/window
+	$(CC) $(CFLAGS) -I./engine/include -c $< -o $@
+
+$(BINDIR)/obj/game/%.o: game/src/%.c | $(BINDIR)/obj/game
+	$(CC) $(CFLAGS) -I./engine/include -c $< -o $@
+
+$(BINDIR) $(BINDIR)/obj $(BINDIR)/obj/engine $(BINDIR)/obj/engine/mesh $(BINDIR)/obj/engine/opengl $(BINDIR)/obj/engine/window $(BINDIR)/obj/game:
 	mkdir -p $@
 
-run: $(TARGET)
-	./$(TARGET)
+run: $(GAME_TARGET)
+	./$(GAME_TARGET)
 
 clean:
 	rm -rf $(BINDIR)

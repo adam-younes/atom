@@ -18,46 +18,21 @@ static EGLSurface  egl_surface  = EGL_NO_SURFACE;
 static int width  = 1080;
 static int height = 1080;
 
-// Shader sources
-static const char *vs_source =
-    "#version 330 core\n"
-    "layout(location = 0) in vec3 aPos;\n"
-    "layout(location = 1) in vec3 aNormal;\n"
-    "uniform mat4 uModel;\n"
-    "uniform mat4 uView;\n"
-    "uniform mat4 uProj;\n"
-    "uniform mat4 uNormalMat;\n"
-    "out vec3 FragPos;\n"
-    "out vec3 Normal;\n"
-    "void main() {\n"
-    "  FragPos = vec3(uModel * vec4(aPos, 1.0));\n"
-    "  Normal = mat3(uNormalMat) * aNormal;\n"
-    "  gl_Position = uProj * uView * vec4(FragPos, 1.0);\n"
-    "}\n";
-
-static const char *fs_source =
-    "#version 330 core\n"
-    "in vec3 FragPos;\n"
-    "in vec3 Normal;\n"
-    "out vec4 FragColor;\n"
-    "uniform vec3 uLightPos;\n"
-    "uniform vec3 uViewPos;\n"
-    "uniform vec3 uLightColor;\n"
-    "uniform vec3 uObjectColor;\n"
-    "void main() {\n"
-    "  vec3 ambient = 0.3 * uLightColor;\n"
-    "  vec3 norm = normalize(Normal);\n"
-    "  vec3 lightDir = normalize(uLightPos - FragPos);\n"
-    "  float diff = max(dot(norm, lightDir), 0.0);\n"
-    "  vec3 diffuse = diff * uLightColor;\n"
-    "  vec3 viewDir = normalize(uViewPos - FragPos);\n"
-    "  vec3 reflectDir = reflect(-lightDir, norm);\n"
-    "  float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);\n"
-    "  vec3 specular = 0.8 * spec * uLightColor;\n"
-    "  vec3 result = (ambient + diffuse + specular) * uObjectColor;\n"
-    "  FragColor = vec4(result, 1.0);\n"
-    "}\n";
-
+static char *load_shader_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        fprintf(stderr, "Failed to open shader: %s\n", path);
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = malloc(len + 1);
+    fread(buf, 1, len, f);
+    buf[len] = '\0';
+    fclose(f);
+    return buf;
+}
 
 static void init_glad(void) {
     if (!gladLoadGL((GLADloadfunc) eglGetProcAddress)) {
@@ -83,10 +58,19 @@ static GLuint compile_shader(GLenum type, const char *src) {
     return sh;
 }
 
-// build the program once
-static GLuint make_program(void) {
-    GLuint v = compile_shader(GL_VERTEX_SHADER,   vs_source);
+static GLuint make_program_from_files(const char *vs_path, const char *fs_path) {
+    char *vs_source = load_shader_file(vs_path);
+    char *fs_source = load_shader_file(fs_path);
+    if (!vs_source || !fs_source) {
+        exit(1);
+    }
+
+    GLuint v = compile_shader(GL_VERTEX_SHADER, vs_source);
     GLuint f = compile_shader(GL_FRAGMENT_SHADER, fs_source);
+
+    free(vs_source);
+    free(fs_source);
+
     GLuint p = glCreateProgram();
     glAttachShader(p, v);
     glAttachShader(p, f);
