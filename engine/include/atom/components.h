@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <atom/entity.h>
-#include <math/la.h>
-#include <mesh/mesh.h>
+#include <atom/la.h>
+#include <atom/mesh.h>
 
 typedef struct {
   entity_id entity;

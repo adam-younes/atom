@@ -18,6 +18,10 @@ static struct xdg_surface       *xdg_surface   = NULL;
 static struct xdg_toplevel      *xdg_toplevel  = NULL;
 static struct wl_seat           *wl_seat       = NULL;
 static struct wl_keyboard       *wl_keyboard   = NULL;
+static struct wl_pointer        *wl_pointer    = NULL;
+static double last_mouse_x = 0.0;
+static double last_mouse_y = 0.0;
+static bool mouse_initialized = false;
 
 // wayland listeners
 static key_code linux_keycode_to_key_code(uint32_t key) {
@@ -81,11 +85,65 @@ static const struct wl_keyboard_listener keyboard_listener = {
   .repeat_info = keyboard_repeat_info,
 };
 
+static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
+                         struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {
+  (void)data; (void)pointer; (void)serial; (void)surface; (void)sx; (void)sy;
+}
+
+static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
+                         struct wl_surface *surface) {
+  (void)data; (void)pointer; (void)serial; (void)surface;
+}
+
+static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time,
+                          wl_fixed_t sx, wl_fixed_t sy) {
+  (void)data; (void)pointer; (void)time;
+
+  double x = wl_fixed_to_double(sx);
+  double y = wl_fixed_to_double(sy);
+
+  if (mouse_initialized) {
+    float dx = (float)(x - last_mouse_x);
+    float dy = (float)(y - last_mouse_y);
+    input_process_mouse_motion(dx, dy);
+  }
+
+  last_mouse_x = x;
+  last_mouse_y = y;
+  mouse_initialized = true;
+}
+
+static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
+                          uint32_t time, uint32_t button, uint32_t state) {
+  (void)data; (void)pointer; (void)serial; (void)time; (void)button;
+  if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
+    bool locked = input_is_mouse_locked();
+    input_set_mouse_locked(!locked);
+  }
+}
+
+static void pointer_axis(void *data, struct wl_pointer *pointer, uint32_t time,
+                        uint32_t axis, wl_fixed_t value) {
+  (void)data; (void)pointer; (void)time; (void)axis; (void)value;
+}
+
+static const struct wl_pointer_listener pointer_listener = {
+  .enter = pointer_enter,
+  .leave = pointer_leave,
+  .motion = pointer_motion,
+  .button = pointer_button,
+  .axis = pointer_axis,
+};
+
 static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
   (void)data;
   if (caps & WL_SEAT_CAPABILITY_KEYBOARD) {
     wl_keyboard = wl_seat_get_keyboard(seat);
     wl_keyboard_add_listener(wl_keyboard, &keyboard_listener, NULL);
+  }
+  if (caps & WL_SEAT_CAPABILITY_POINTER) {
+    wl_pointer = wl_seat_get_pointer(seat);
+    wl_pointer_add_listener(wl_pointer, &pointer_listener, NULL);
   }
 }
 

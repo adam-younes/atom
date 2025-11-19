@@ -27,10 +27,17 @@ typedef struct {
     bool is_pressed;
 } key_binding;
 
+typedef void (*mouse_move_handler)(float dx, float dy);
+
 void input_init(void);
 void input_update(float dt);
 void input_bind_key(key_code code, key_handler on_press, key_handler on_hold, key_handler on_release);
 void input_set_key_state(key_code code, bool pressed);
 bool input_is_key_pressed(key_code code);
+
+void input_set_mouse_handler(mouse_move_handler handler);
+void input_process_mouse_motion(float dx, float dy);
+void input_set_mouse_locked(bool locked);
+bool input_is_mouse_locked(void);
 
 #endif

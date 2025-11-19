@@ -10,7 +10,7 @@
 #include <atom/input.h>
 #include <window/window.h>
 #include <window/xdg-shell-client-protocol.h>
-#include <opengl/opengl.h>
+#include <atom/graphics.h>
 
 int width = 1080;
 int height = 1080;
