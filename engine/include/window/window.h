@@ -1,8 +1,11 @@
 #include <wayland-client.h>
+#include <wayland-cursor.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <window/xdg-shell-client-protocol.h>
+#include <window/pointer-constraints-unstable-v1-client-protocol.h>
+#include <window/relative-pointer-unstable-v1-client-protocol.h>
 #include <linux/input-event-codes.h>
 #include <atom/input.h>
 
@@ -12,6 +15,7 @@ static bool running = true;
 static struct wl_display        *wl_display    = NULL;
 static struct wl_registry       *wl_registry   = NULL;
 static struct wl_compositor     *wl_compositor = NULL;
+static struct wl_shm            *wl_shm        = NULL;
 static struct xdg_wm_base       *xdg_wm_base   = NULL;
 static struct wl_surface        *wl_surface    = NULL;
 static struct xdg_surface       *xdg_surface   = NULL;
@@ -19,6 +23,14 @@ static struct xdg_toplevel      *xdg_toplevel  = NULL;
 static struct wl_seat           *wl_seat       = NULL;
 static struct wl_keyboard       *wl_keyboard   = NULL;
 static struct wl_pointer        *wl_pointer    = NULL;
+static struct wl_cursor_theme   *cursor_theme  = NULL;
+static struct wl_cursor         *cursor        = NULL;
+static struct wl_surface        *cursor_surface = NULL;
+static struct zwp_pointer_constraints_v1 *pointer_constraints = NULL;
+static struct zwp_relative_pointer_manager_v1 *relative_pointer_manager = NULL;
+static struct zwp_relative_pointer_v1 *relative_pointer = NULL;
+static struct zwp_locked_pointer_v1 *locked_pointer = NULL;
+static struct zwp_confined_pointer_v1 *confined_pointer = NULL;
 static double last_mouse_x = 0.0;
 static double last_mouse_y = 0.0;
 static bool mouse_initialized = false;
@@ -85,9 +97,45 @@ static const struct wl_keyboard_listener keyboard_listener = {
   .repeat_info = keyboard_repeat_info,
 };
 
+static void relative_pointer_motion(void *data,
+                                   struct zwp_relative_pointer_v1 *pointer,
+                                   uint32_t utime_hi, uint32_t utime_lo,
+                                   wl_fixed_t dx, wl_fixed_t dy,
+                                   wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel) {
+  (void)data; (void)pointer; (void)utime_hi; (void)utime_lo;
+  (void)dx_unaccel; (void)dy_unaccel;
+
+  float fdx = wl_fixed_to_double(dx);
+  float fdy = wl_fixed_to_double(dy);
+  input_process_mouse_motion(fdx, fdy);
+}
+
+static const struct zwp_relative_pointer_v1_listener relative_pointer_listener = {
+  .relative_motion = relative_pointer_motion,
+};
+
+static void set_cursor_visible(bool visible) {
+  if (!wl_pointer) return;
+
+  if (visible) {
+    if (!cursor_theme) {
+      cursor_theme = wl_cursor_theme_load(NULL, 24, wl_shm);
+      if (cursor_theme) {
+        cursor = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+      }
+    }
+  } else {
+    wl_pointer_set_cursor(wl_pointer, 0, NULL, 0, 0);
+  }
+}
+
 static void pointer_enter(void *data, struct wl_pointer *pointer, uint32_t serial,
                          struct wl_surface *surface, wl_fixed_t sx, wl_fixed_t sy) {
-  (void)data; (void)pointer; (void)serial; (void)surface; (void)sx; (void)sy;
+  (void)data; (void)surface; (void)sx; (void)sy;
+
+  if (input_is_mouse_locked()) {
+    wl_pointer_set_cursor(pointer, serial, NULL, 0, 0);
+  }
 }
 
 static void pointer_leave(void *data, struct wl_pointer *pointer, uint32_t serial,
@@ -113,12 +161,58 @@ static void pointer_motion(void *data, struct wl_pointer *pointer, uint32_t time
   mouse_initialized = true;
 }
 
+void window_lock_pointer(void) {
+  if (!pointer_constraints || !wl_pointer || locked_pointer) return;
+
+  if (relative_pointer_manager && !relative_pointer) {
+    relative_pointer = zwp_relative_pointer_manager_v1_get_relative_pointer(
+      relative_pointer_manager, wl_pointer
+    );
+    zwp_relative_pointer_v1_add_listener(relative_pointer, &relative_pointer_listener, NULL);
+  }
+
+  locked_pointer = zwp_pointer_constraints_v1_lock_pointer(
+    pointer_constraints, wl_surface, wl_pointer, NULL,
+    ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT
+  );
+  wl_pointer_set_cursor(wl_pointer, 0, NULL, 0, 0);
+}
+
+void window_unlock_pointer(void) {
+  if (locked_pointer) {
+    zwp_locked_pointer_v1_destroy(locked_pointer);
+    locked_pointer = NULL;
+  }
+  if (relative_pointer) {
+    zwp_relative_pointer_v1_destroy(relative_pointer);
+    relative_pointer = NULL;
+  }
+}
+
 static void pointer_button(void *data, struct wl_pointer *pointer, uint32_t serial,
                           uint32_t time, uint32_t button, uint32_t state) {
-  (void)data; (void)pointer; (void)serial; (void)time; (void)button;
+  (void)data; (void)time; (void)button;
   if (state == WL_POINTER_BUTTON_STATE_PRESSED) {
     bool locked = input_is_mouse_locked();
     input_set_mouse_locked(!locked);
+
+    if (!locked) {
+      wl_pointer_set_cursor(pointer, serial, NULL, 0, 0);
+      window_lock_pointer();
+    } else {
+      window_unlock_pointer();
+      if (cursor && cursor->images[0]) {
+        struct wl_cursor_image *image = cursor->images[0];
+        if (!cursor_surface) {
+          cursor_surface = wl_compositor_create_surface(wl_compositor);
+        }
+        wl_pointer_set_cursor(pointer, serial, cursor_surface,
+                             image->hotspot_x, image->hotspot_y);
+        wl_surface_attach(cursor_surface, wl_cursor_image_get_buffer(image), 0, 0);
+        wl_surface_damage(cursor_surface, 0, 0, image->width, image->height);
+        wl_surface_commit(cursor_surface);
+      }
+    }
   }
 }
 
@@ -144,6 +238,13 @@ static void seat_capabilities(void *data, struct wl_seat *seat, uint32_t caps) {
   if (caps & WL_SEAT_CAPABILITY_POINTER) {
     wl_pointer = wl_seat_get_pointer(seat);
     wl_pointer_add_listener(wl_pointer, &pointer_listener, NULL);
+
+    if (wl_shm) {
+      cursor_theme = wl_cursor_theme_load(NULL, 24, wl_shm);
+      if (cursor_theme) {
+        cursor = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+      }
+    }
   }
 }
 
@@ -166,12 +267,21 @@ static void registry_global(void *data,
   if (strcmp(iface, wl_compositor_interface.name) == 0) {
     wl_compositor = wl_registry_bind(reg, name, &wl_compositor_interface, 1);
   }
+  else if (strcmp(iface, wl_shm_interface.name) == 0) {
+    wl_shm = wl_registry_bind(reg, name, &wl_shm_interface, 1);
+  }
   else if (strcmp(iface, xdg_wm_base_interface.name) == 0) {
     xdg_wm_base = wl_registry_bind(reg, name, &xdg_wm_base_interface, 1);
   }
   else if (strcmp(iface, wl_seat_interface.name) == 0) {
     wl_seat = wl_registry_bind(reg, name, &wl_seat_interface, 1);
     wl_seat_add_listener(wl_seat, &seat_listener, NULL);
+  }
+  else if (strcmp(iface, zwp_pointer_constraints_v1_interface.name) == 0) {
+    pointer_constraints = wl_registry_bind(reg, name, &zwp_pointer_constraints_v1_interface, 1);
+  }
+  else if (strcmp(iface, zwp_relative_pointer_manager_v1_interface.name) == 0) {
+    relative_pointer_manager = wl_registry_bind(reg, name, &zwp_relative_pointer_manager_v1_interface, 1);
   }
 }
 

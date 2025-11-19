@@ -57,8 +57,15 @@ void input_process_mouse_motion(float dx, float dy) {
     }
 }
 
+#include <window/cursor.h>
+
 void input_set_mouse_locked(bool locked) {
     mouse_locked = locked;
+    if (locked) {
+        window_lock_pointer();
+    } else {
+        window_unlock_pointer();
+    }
 }
 
 bool input_is_mouse_locked(void) {
