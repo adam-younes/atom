@@ -2,14 +2,14 @@
 #include <float.h>
 
 #include <GLES2/gl2.h>
-#include <atom/engine.h>
-#include <atom/scene/scene.h>
-#include <atom/input/input.h>
-#include <atom/camera/camera_controller.h>
-#include <atom/lib/la.h>
-#include <atom/lib/trig.h>
-#include <atom/assets/mesh.h>
-#include <atom/lib/graphics.h>
+#include <engine.h>
+#include <scene/scene.h>
+#include <input/input.h>
+#include <camera/camera_controller.h>
+#include <lib/la.h>
+#include <lib/trig.h>
+#include <assets/mesh.h>
+#include <lib/graphics.h>
 
 static scene game_scene;
 static mesh teapot_mesh;

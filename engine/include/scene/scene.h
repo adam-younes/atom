@@ -1,8 +1,8 @@
 #ifndef ATOM_SCENE_H
 #define ATOM_SCENE_H
 
-#include <atom/scene/entity.h>
-#include <atom/scene/components.h>
+#include <scene/entity.h>
+#include <scene/components.h>
 #include <stddef.h>
 
 typedef struct {

@@ -1,9 +1,9 @@
-#include <atom/assets/mesh.h>
+#include <assets/mesh.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <atom/lib/la.h>
+#include <lib/la.h>
 
 typedef void (*mesh_loader)(const char *, mesh *); 
 

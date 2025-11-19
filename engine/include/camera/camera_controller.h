@@ -1,7 +1,7 @@
 #ifndef ATOM_CAMERA_CONTROLLER_H
 #define ATOM_CAMERA_CONTROLLER_H
 
-#include <atom/scene/scene.h>
+#include <scene/scene.h>
 
 typedef struct {
     scene *target_scene;

@@ -1,10 +1,10 @@
-#include <atom/assets/mesh.h>
+#include <assets/mesh.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
-#include <atom/lib/la.h>
+#include <lib/la.h>
 
 void load_obj(const char *path, mesh *out)
 __attribute__((alias("at_load_obj")));

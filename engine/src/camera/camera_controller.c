@@ -1,6 +1,6 @@
-#include <atom/camera/camera_controller.h>
-#include <atom/input/input.h>
-#include <atom/lib/trig.h>
+#include <camera/camera_controller.h>
+#include <input/input.h>
+#include <lib/trig.h>
 #include <stdio.h>
 #include <math.h>
 

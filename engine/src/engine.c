@@ -6,11 +6,11 @@
 #include <GLES2/gl2.h>
 #include <EGL/egl.h>
 
-#include <atom/engine.h>
-#include <atom/input/input.h>
+#include <engine.h>
+#include <input/input.h>
 #include <window/window.h>
 #include <window/xdg-shell-client-protocol.h>
-#include <atom/lib/graphics.h>
+#include <lib/graphics.h>
 
 int width = 1080;
 int height = 1080;

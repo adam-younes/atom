@@ -1,4 +1,4 @@
-#include <atom/input/input.h>
+#include <input/input.h>
 #include <string.h>
 #include <stdio.h>
 
