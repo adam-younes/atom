@@ -7,10 +7,10 @@
 #include <EGL/egl.h>
 
 #include <atom/engine.h>
-#include <atom/input.h>
+#include <atom/input/input.h>
 #include <window/window.h>
 #include <window/xdg-shell-client-protocol.h>
-#include <atom/graphics.h>
+#include <atom/lib/graphics.h>
 
 int width = 1080;
 int height = 1080;

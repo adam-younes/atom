@@ -7,7 +7,7 @@
 #include <window/pointer-constraints-unstable-v1-client-protocol.h>
 #include <window/relative-pointer-unstable-v1-client-protocol.h>
 #include <linux/input-event-codes.h>
-#include <atom/input.h>
+#include <atom/input/input.h>
 
 static bool running = true;
 

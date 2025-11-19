@@ -1,4 +1,4 @@
-#include <atom/entity.h>
+#include <atom/scene/entity.h>
 #include <string.h>
 
 static uint64_t next_entity_id = 1;

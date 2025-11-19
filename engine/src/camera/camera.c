@@ -1,5 +1,5 @@
-#include <atom/la.h>
-#include <atom/camera.h>
+#include <atom/lib/la.h>
+#include <atom/camera/camera.h>
 
 static inline mat4 look_at(camera *cam) {
   // forward = normalize(center − eye)

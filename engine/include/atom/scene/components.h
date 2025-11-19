@@ -3,9 +3,9 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include <atom/entity.h>
-#include <atom/la.h>
-#include <atom/mesh.h>
+#include <atom/scene/entity.h>
+#include <atom/lib/la.h>
+#include <atom/assets/mesh.h>
 
 typedef struct {
   entity_id entity;

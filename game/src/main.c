@@ -3,13 +3,13 @@
 
 #include <GLES2/gl2.h>
 #include <atom/engine.h>
-#include <atom/scene.h>
-#include <atom/input.h>
-#include <atom/camera_controller.h>
-#include <atom/la.h>
-#include <atom/trig.h>
-#include <atom/mesh.h>
-#include <atom/graphics.h>
+#include <atom/scene/scene.h>
+#include <atom/input/input.h>
+#include <atom/camera/camera_controller.h>
+#include <atom/lib/la.h>
+#include <atom/lib/trig.h>
+#include <atom/assets/mesh.h>
+#include <atom/lib/graphics.h>
 
 static scene game_scene;
 static mesh teapot_mesh;

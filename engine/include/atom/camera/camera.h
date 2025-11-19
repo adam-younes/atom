@@ -1,7 +1,7 @@
 #ifndef ATOM_CAMERA_H
 #define ATOM_CAMERA_H
 
-#include <atom/la.h>
+#include <atom/lib/la.h>
 
 typedef struct {
   vec3    position;

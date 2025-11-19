@@ -1,6 +1,6 @@
 #include <opengl/glad.h>
-#include <atom/scene.h>
-#include <atom/trig.h>
+#include <atom/scene/scene.h>
+#include <atom/lib/trig.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
