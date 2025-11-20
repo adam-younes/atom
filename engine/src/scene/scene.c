@@ -1,5 +1,9 @@
 #include <opengl/glad.h>
 #include <scene/scene.h>
+#include <components/transform.h>
+#include <components/mesh_renderer.h>
+#include <components/light.h>
+#include <components/camera.h>
 #include <lib/trig.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,12 +32,7 @@ void scene_init(scene *s) {
 
 void scene_destroy(scene *s) {
   for (size_t i = 0; i < s->mesh_renderer_count; i++) {
-    if (s->mesh_renderers[i].initialized) {
-      glDeleteBuffers(1, &s->mesh_renderers[i].ebo);
-      glDeleteBuffers(1, &s->mesh_renderers[i].vbo_norm);
-      glDeleteBuffers(1, &s->mesh_renderers[i].vbo_pos);
-      glDeleteVertexArrays(1, &s->mesh_renderers[i].vao);
-    }
+    mesh_renderer_component_cleanup(&s->mesh_renderers[i]);
   }
 
   free(s->transforms);
@@ -54,15 +53,7 @@ transform_component* scene_add_transform(scene *s, entity_id id) {
   }
 
   transform_component *t = &s->transforms[s->transform_count++];
-  memset(t, 0, sizeof(transform_component));
-  t->entity = id;
-  t->parent = ENTITY_NULL;
-  t->position = (vec3){0, 0, 0};
-  t->rotation = (vec3){0, 0, 0};
-  t->scale = (vec3){1, 1, 1};
-  t->local_matrix = mat4_identity();
-  t->world_matrix = mat4_identity();
-  t->dirty = true;
+  transform_component_init(t, id);
   return t;
 }
 
@@ -73,9 +64,7 @@ mesh_renderer_component* scene_add_mesh_renderer(scene *s, entity_id id) {
   }
 
   mesh_renderer_component *m = &s->mesh_renderers[s->mesh_renderer_count++];
-  memset(m, 0, sizeof(mesh_renderer_component));
-  m->entity = id;
-  m->initialized = false;
+  mesh_renderer_component_init(m, id);
   return m;
 }
 
@@ -86,10 +75,7 @@ light_component* scene_add_light(scene *s, entity_id id) {
   }
 
   light_component *l = &s->lights[s->light_count++];
-  memset(l, 0, sizeof(light_component));
-  l->entity = id;
-  l->color = (vec3){1, 1, 1};
-  l->intensity = 1.0f;
+  light_component_init(l, id);
   return l;
 }
 
@@ -100,14 +86,7 @@ camera_component* scene_add_camera(scene *s, entity_id id) {
   }
 
   camera_component *c = &s->cameras[s->camera_count++];
-  memset(c, 0, sizeof(camera_component));
-  c->entity = id;
-  c->fov = to_radians(45.0f);
-  c->aspect = (float)width / (float)height;
-  c->near_plane = 0.1f;
-  c->far_plane = 1000.0f;
-  c->view_matrix = mat4_identity();
-  c->projection_matrix = mat4_identity();
+  camera_component_init(c, id, to_radians(45.0f), (float)width / (float)height, 0.1f, 1000.0f);
   return c;
 }
 
@@ -150,57 +129,13 @@ camera_component* scene_get_camera(scene *s, entity_id id) {
 void scene_update_transforms(scene *s) {
   for (size_t i = 0; i < s->transform_count; i++) {
     transform_component *t = &s->transforms[i];
-
-    if (!t->dirty) continue;
-
-    mat4 translation = mat4_identity();
-    translation.m[0][3] = t->position.x;
-    translation.m[1][3] = t->position.y;
-    translation.m[2][3] = t->position.z;
-
-    mat4 rotation_x = mat4_identity();
-    float cx = cosf(t->rotation.x);
-    float sx = sinf(t->rotation.x);
-    rotation_x.m[1][1] = cx;
-    rotation_x.m[1][2] = -sx;
-    rotation_x.m[2][1] = sx;
-    rotation_x.m[2][2] = cx;
-
-    mat4 rotation_y = mat4_identity();
-    float cy = cosf(t->rotation.y);
-    float sy = sinf(t->rotation.y);
-    rotation_y.m[0][0] = cy;
-    rotation_y.m[0][2] = sy;
-    rotation_y.m[2][0] = -sy;
-    rotation_y.m[2][2] = cy;
-
-    mat4 rotation_z = mat4_identity();
-    float cz = cosf(t->rotation.z);
-    float sz = sinf(t->rotation.z);
-    rotation_z.m[0][0] = cz;
-    rotation_z.m[0][1] = -sz;
-    rotation_z.m[1][0] = sz;
-    rotation_z.m[1][1] = cz;
-
-    mat4 scale_mat = mat4_identity();
-    scale_mat.m[0][0] = t->scale.x;
-    scale_mat.m[1][1] = t->scale.y;
-    scale_mat.m[2][2] = t->scale.z;
-
-    t->local_matrix = mat_mul(translation, mat_mul(mat_mul(rotation_z, mat_mul(rotation_y, rotation_x)), scale_mat));
+    transform_component *parent = NULL;
 
     if (t->parent != ENTITY_NULL) {
-      transform_component *parent = scene_get_transform(s, t->parent);
-      if (parent) {
-        t->world_matrix = mat_mul(parent->world_matrix, t->local_matrix);
-      } else {
-        t->world_matrix = t->local_matrix;
-      }
-    } else {
-      t->world_matrix = t->local_matrix;
+      parent = scene_get_transform(s, t->parent);
     }
 
-    t->dirty = false;
+    transform_component_update(t, parent);
   }
 }
 
