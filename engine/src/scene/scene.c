@@ -27,6 +27,9 @@ void scene_init(scene *s) {
   s->camera_capacity = 16;
   s->cameras = calloc(s->camera_capacity, sizeof(camera_component));
 
+  s->controller_capacity = 64;
+  s->controllers = calloc(s->controller_capacity, sizeof(controller_component));
+
   s->active_camera = ENTITY_NULL;
 }
 
@@ -39,6 +42,7 @@ void scene_destroy(scene *s) {
   free(s->mesh_renderers);
   free(s->lights);
   free(s->cameras);
+  free(s->controllers);
 }
 
 entity_id scene_create_entity(scene *s) {
@@ -90,6 +94,17 @@ camera_component* scene_add_camera(scene *s, entity_id id) {
   return c;
 }
 
+controller_component* scene_add_controller(scene *s, entity_id id, entity_id target) {
+  if (s->controller_count >= s->controller_capacity) {
+    s->controller_capacity *= 2;
+    s->controllers = realloc(s->controllers, s->controller_capacity * sizeof(controller_component));
+  }
+
+  controller_component *c = &s->controllers[s->controller_count++];
+  controller_component_init(c, id, target);
+  return c;
+}
+
 transform_component* scene_get_transform(scene *s, entity_id id) {
   for (size_t i = 0; i < s->transform_count; i++) {
     if (s->transforms[i].entity == id) {
@@ -121,6 +136,15 @@ camera_component* scene_get_camera(scene *s, entity_id id) {
   for (size_t i = 0; i < s->camera_count; i++) {
     if (s->cameras[i].entity == id) {
       return &s->cameras[i];
+    }
+  }
+  return NULL;
+}
+
+controller_component* scene_get_controller(scene *s, entity_id id) {
+  for (size_t i = 0; i < s->controller_count; i++) {
+    if (s->controllers[i].entity == id) {
+      return &s->controllers[i];
     }
   }
   return NULL;

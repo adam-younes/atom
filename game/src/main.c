@@ -5,7 +5,7 @@
 #include <engine.h>
 #include <scene/scene.h>
 #include <input/input.h>
-#include <camera/camera_controller.h>
+#include <systems/movement.h>
 #include <lib/la.h>
 #include <lib/trig.h>
 #include <assets/mesh.h>
@@ -16,7 +16,7 @@ static mesh teapot_mesh;
 static entity_id teapot_entity;
 static entity_id camera_entity;
 static entity_id light_entity;
-static camera_controller cam_controller;
+static entity_id controller_entity;
 
 static GLuint program;
 GLint model_loc, view_loc, proj_loc, normal_loc;
@@ -157,7 +157,8 @@ void game_init(void) {
   glUniform3fv(light_color_loc, 1, &light->color.x);
   glUniform3fv(object_color_loc, 1, &object_color.x);
 
-  camera_controller_init(&cam_controller, &game_scene, camera_entity);
+  controller_entity = scene_create_entity(&game_scene);
+  controller_component *ctrl = scene_add_controller(&game_scene, controller_entity, camera_entity);
 
   input_bind_key(ATOM_KEY_W, NULL, cam_move_forward, NULL);
   input_bind_key(ATOM_KEY_S, NULL, cam_move_backward, NULL);
@@ -170,19 +171,42 @@ void game_init(void) {
   input_set_mouse_locked(true);
 }
 
-static void cam_move_forward(float dt) { camera_controller_move_forward(&cam_controller, dt); }
-static void cam_move_backward(float dt) { camera_controller_move_backward(&cam_controller, dt); }
-static void cam_move_left(float dt) { camera_controller_move_left(&cam_controller, dt); }
-static void cam_move_right(float dt) { camera_controller_move_right(&cam_controller, dt); }
-static void cam_move_up(float dt) { camera_controller_move_up(&cam_controller, dt); }
-static void cam_move_down(float dt) { camera_controller_move_down(&cam_controller, dt); }
+static void cam_move_forward(float dt) {
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) movement_system_move_forward(&game_scene, ctrl, dt);
+}
+
+static void cam_move_backward(float dt) {
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) movement_system_move_backward(&game_scene, ctrl, dt);
+}
+
+static void cam_move_left(float dt) {
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) movement_system_move_left(&game_scene, ctrl, dt);
+}
+
+static void cam_move_right(float dt) {
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) movement_system_move_right(&game_scene, ctrl, dt);
+}
+
+static void cam_move_up(float dt) {
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) movement_system_move_up(&game_scene, ctrl, dt);
+}
+
+static void cam_move_down(float dt) {
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) movement_system_move_down(&game_scene, ctrl, dt);
+}
 
 static void handle_mouse_look(float dx, float dy) {
-  camera_controller_rotate(&cam_controller, dx, dy);
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+  if (ctrl) controller_rotate(ctrl, dx, dy);
 }
 
 void game_update(float dt) {
-
   transform_component *t = scene_get_transform(&game_scene, teapot_entity);
   if (t) {
     t->rotation.y += dt;
@@ -191,8 +215,10 @@ void game_update(float dt) {
 
   transform_component *cam_t = scene_get_transform(&game_scene, camera_entity);
   camera_component *cam = scene_get_camera(&game_scene, camera_entity);
-  if (cam_t && cam) {
-    vec3 forward = camera_controller_get_forward(&cam_controller);
+  controller_component *ctrl = scene_get_controller(&game_scene, controller_entity);
+
+  if (cam_t && cam && ctrl) {
+    vec3 forward = controller_get_forward(ctrl);
     vec3 target = vec_sum(cam_t->position, forward);
     cam->view_matrix = look_at(
       cam_t->position,

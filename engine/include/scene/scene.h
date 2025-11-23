@@ -22,6 +22,10 @@ typedef struct {
   size_t camera_count;
   size_t camera_capacity;
 
+  controller_component *controllers;
+  size_t controller_count;
+  size_t controller_capacity;
+
   entity_id active_camera;
 } scene;
 
@@ -34,11 +38,13 @@ transform_component* scene_add_transform(scene *s, entity_id id);
 mesh_renderer_component* scene_add_mesh_renderer(scene *s, entity_id id);
 light_component* scene_add_light(scene *s, entity_id id);
 camera_component* scene_add_camera(scene *s, entity_id id);
+controller_component* scene_add_controller(scene *s, entity_id id, entity_id target);
 
 transform_component* scene_get_transform(scene *s, entity_id id);
 mesh_renderer_component* scene_get_mesh_renderer(scene *s, entity_id id);
 light_component* scene_get_light(scene *s, entity_id id);
 camera_component* scene_get_camera(scene *s, entity_id id);
+controller_component* scene_get_controller(scene *s, entity_id id);
 
 void scene_update_transforms(scene *s);
 void scene_render(scene *s);

@@ -5,5 +5,6 @@
 #include <components/mesh_renderer.h>
 #include <components/light.h>
 #include <components/camera.h>
+#include <components/controller.h>
 
 #endif
