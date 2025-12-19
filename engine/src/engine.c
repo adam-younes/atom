@@ -13,7 +13,7 @@
 #include <lib/graphics.h>
 
 int width = 1080;
-int height = 1080;
+int height = 1920;
 
 int atom_run(atom_config *config, atom_callbacks *callbacks) {
   wl_display = wl_display_connect(NULL);

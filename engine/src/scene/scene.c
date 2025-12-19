@@ -8,7 +8,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <math.h>
 
 extern int width, height;
 extern GLint model_loc, view_loc, proj_loc, normal_loc;
