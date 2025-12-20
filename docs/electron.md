@@ -62,14 +62,15 @@ Identifiers must begin with a letter or underscore, followed by letters, digits,
 ```
 bool        break       const       continue    core
 coro        def         defer       dict        do
-else        enum        false       float       for
-from        if          import      in          inner
-int         list        loop        match       mat2
-mat3        mat4        mut         null        public
-range       readonly    requires    return      shell
-strict      string      then        true        type
-unique      value       vec2        vec3        vec4
-while       yield
+else        enum        error       export      false
+float       for         from        func        if
+import      in          inner       int         list
+loop        match       mat2        mat3        mat4
+mut         null        public      range       readonly
+requires    result      return      shell       strict
+string      struct      success     then        true
+tuple       type        unique      vec2        vec3
+vec4        while       yield       yield_request
 ```
 
 **Reserved for Future Use:**
@@ -250,31 +251,31 @@ Tuples are fixed-size, heterogeneous value types.
 **Declaration and Construction:**
 
 ```electron
-(int, int) point = (10, 20);
-(string, int, bool) record = ("Alice", 30, true);
+tuple[int, int] point = (10, 20);
+tuple[string, int, bool] record = ("Alice", 30, true);
 ```
 
 **Access:**
 
 ```electron
-int x = point.0;    // 10
-int y = point.1;    // 20
+int x = point[0];    // 10
+int y = point[1];    // 20
 ```
 
 **Destructuring:**
 
 ```electron
-(int x, int y) = point;
-(string name, int age, bool active) = record;
+tuple[int, int] (x, y) = point;
+tuple[string, int, bool] (name, age, active) = record;
 
 // Partial destructuring with wildcards
-(string name, _, _) = record;
+tuple[string, int, bool] (name, _, _) = record;
 ```
 
 **Function Returns:**
 
 ```electron
-def min_max(list[int] nums) -> (int, int) {
+def min_max(list[int] nums) -> tuple[int, int] {
     int min_val = nums[0];
     int max_val = nums[0];
     for n in nums {
@@ -284,7 +285,7 @@ def min_max(list[int] nums) -> (int, int) {
     return (min_val, max_val);
 }
 
-(int lo, int hi) = min_max(numbers);
+tuple[int, int] (lo, hi) = min_max(numbers);
 ```
 
 Tuples are value types: copied on assignment, cannot be nullable. Tuples must have at least two elements.
@@ -320,21 +321,31 @@ dict[int -> string] lookup = {1: "one", 2: "two"};
 
 ### 2.7 Function Type
 
-Functions are first-class values. Function types specify their parameter types and return type.
+Functions are first-class values. Function variables must be declared with the `func` keyword.
 
 **Basic Function Types:**
 
 ```electron
 // Fully typed function variable
-(int, int) -> int adder = (int a, int b) -> int { return a + b; };
+func[(int, int) -> int] adder = (int a, int b) -> int { return a + b; };
+
+// Type annotations in the value are optional when the declaration is typed
+func[(int, int) -> int] adder = (a, b) { return a + b; };
+
+// When initialized, types can be inferred from the function definition
+func adder = (int a, int b) -> int { return a + b; };
 
 // Function that takes no arguments and returns void
-() -> void callback = () { print("called"); };
+func[() -> void] callback = () { print("called"); };
 
-// Function as parameter
-def apply(int x, (int) -> int transform) -> int {
+// Function as parameter (must be fully typed, no inference)
+def apply(int x, func[(int) -> int] transform) -> int {
     return transform(x);
 }
+
+// Uninitialized function variables must have explicit types
+func[(int) -> int] pending_transform;  // OK
+func pending;                           // Error: type required without initialization
 ```
 
 ### 2.8 Nullable Types
@@ -346,7 +357,7 @@ By default, values cannot be `null`. Use the `?` suffix to make a reference type
 | Category | Types | Nullable? |
 |----------|-------|-----------|
 | Primitives | `int`, `float`, `bool` | No |
-| Value types | `vec*`, `mat*`, `range`, tuples, value cores | No |
+| Value types | `vec*`, `mat*`, `range`, tuples, structs | No |
 | Reference types | `string`, `list`, `dict`, cores | Yes |
 
 ```electron
@@ -374,8 +385,11 @@ list[vec3?] also_bad;     // Error: vec3 is a value type
 Returns `null` if the left operand is null, otherwise accesses the member:
 
 ```electron
-string? name = get_name();
-int? len = name?.length;  // null if name is null
+Player? target = get_target();
+string? name = target?.name;  // null if target is null
+
+// For primitive fields, use null coalescing to provide a default
+int hp = target?.health ?? 0;  // 0 if target is null
 ```
 
 **Null Coalescing Operator (`??`):**
@@ -398,7 +412,7 @@ Create compile-time aliases for existing types:
 ```electron
 type EntityId = int;
 type Vec3List = list[vec3];
-type Callback = (entity, float) -> bool;
+type Callback = func[(entity, float) -> bool];
 type Position = vec3;
 ```
 
@@ -408,8 +422,8 @@ Type aliases are fully interchangeable with their underlying type at compile tim
 core EntityId { int value; }
 core PlayerId { int value; }
 
-EntityId e = EntityId { value: 5 };
-PlayerId p = PlayerId { value: 5 };
+EntityId e = (EntityId) { value: 5 };
+PlayerId p = (PlayerId) { value: 5 };
 // e == p  // Compile error: different types
 ```
 
@@ -440,7 +454,7 @@ int rounded = (int) pi;   // 3
 
 | Category | Types | Semantics |
 |----------|-------|-----------|
-| Value | `int`, `float`, `bool`, `vec*`, `mat*`, `range`, tuples, value cores | Copied on assignment and function call |
+| Value | `int`, `float`, `bool`, `vec*`, `mat*`, `range`, tuples, structs | Copied on assignment and function call |
 | Immutable Reference | `string` | Reference passed, but cannot be modified |
 | Reference | `list`, `dict`, user-defined cores, function types | Reference passed, modifications affect original |
 
@@ -531,7 +545,7 @@ core Entity {
     public int hp;        // Mutable
 }
 
-Entity e = Entity { id: 42, hp: 100 };
+Entity e = (Entity) { id: 42, hp: 100 };
 e.hp = 50;    // OK
 e.id = 99;    // Error: readonly field
 ```
@@ -700,32 +714,32 @@ loop {
 
 ```electron
 list[int] numbers = [1, 2, 3, 4, 5];
-for num in numbers {
+for int num in numbers {
     print(num);
 }
 
 // With index
-for i, num in numbers {
+for int i, int num in numbers {
     print("Index {i}: {num}");
 }
 
 // Dictionary iteration
 dict[string -> int] ages = {"alice": 30, "bob": 25};
-for key, value in ages {
+for string key, int value in ages {
     print("{key} is {value} years old");
 }
 
 // Keys only
-for key in ages {
+for string key in ages {
     print(key);
 }
 
 // Range iteration
-for i in 0..10 {
+for int i in 0..10 {
     print(i);  // 0, 1, 2, ..., 9
 }
 
-for i in 0..=10 {
+for int i in 0..=10 {
     print(i);  // 0, 1, 2, ..., 10
 }
 ```
@@ -733,7 +747,7 @@ for i in 0..=10 {
 **Loop Control:**
 
 ```electron
-for item in items {
+for Item item in items {
     if item.skip {
         continue;  // Skip to next iteration
     }
@@ -749,8 +763,8 @@ for item in items {
 Labels allow breaking or continuing outer loops:
 
 ```electron
-outer: for i in 0..10 {
-    for j in 0..10 {
+outer: for int i in 0..10 {
+    for int j in 0..10 {
         if should_exit(i, j) {
             break outer;  // Exit both loops
         }
@@ -768,7 +782,7 @@ Labels are identifiers followed by a colon before a loop statement.
 `defer` schedules a statement to execute when the current scope exits:
 
 ```electron
-def process_file(string path) -> Result[Data, Error] {
+def process_file(string path) -> result[Data, Error] {
     File f = open(path)?;
     defer f.close();  // Always runs when scope exits
 
@@ -776,12 +790,12 @@ def process_file(string path) -> Result[Data, Error] {
     defer free(b);
 
     if check_header(f) == false {
-        return Err(Error { message: "Invalid header" });
+        return error((Error) { message: "Invalid header" });
         // f.close() and free(b) run here
     }
 
     Data d = parse(f, b)?;
-    return Ok(d);
+    return success(d);
     // f.close() and free(b) run here
 }
 ```
@@ -871,9 +885,9 @@ match state {
 }
 
 // Result patterns
-match result {
-    Ok(value) => use_value(value),
-    Err(e) => handle_error(e)
+match res {
+    success(value) => use_value(value),
+    error(e) => handle_error(e)
 }
 ```
 
@@ -971,16 +985,16 @@ def add(int a, int b) -> int {
     return a + b;
 }
 
-(int, int) -> int operation = add;
+func operation = add;  // Type inferred from add
 int result = operation(2, 3);  // 5
 
 // Function as parameter
-def apply((int) -> int f, int x) -> int {
+def apply(func[(int) -> int] f, int x) -> int {
     return f(x);
 }
 
 // Storing in collections
-list[(int) -> int] transforms = [
+list[func[(int) -> int]] transforms = [
     (int x) -> int { return x * 2; },
     (int x) -> int { return x + 1; }
 ];
@@ -989,11 +1003,11 @@ list[(int) -> int] transforms = [
 ### 6.3 Closures (Anonymous Functions)
 
 ```electron
-(int) -> int doubler = (int x) -> int {
+func doubler = (int x) -> int {
     return x * 2;
 };
 
-(string) -> void greeter = (string name) {
+func greeter = (string name) {
     print("Hello, {name}!");
 };
 
@@ -1007,7 +1021,7 @@ By default, closures capture variables by value (snapshot at creation time):
 
 ```electron
 int x = 10;
-() -> void f = () {
+func f = () {
     print(x);
 };
 x = 20;
@@ -1018,7 +1032,7 @@ To capture by reference, use `[*variable]`:
 
 ```electron
 int x = 10;
-() -> void f = () [*x] {
+func f = () [*x] {
     print(x);
 };
 x = 20;
@@ -1030,7 +1044,7 @@ Multiple captures:
 ```electron
 int a = 1;
 int b = 2;
-() -> void f = () [*a, *b] {
+func f = () [*a, *b] {
     print(a + b);
 };
 ```
@@ -1052,14 +1066,14 @@ def process(list[int] items) {
 // OK: stored in variable but used in same scope
 def example() {
     int x = 10;
-    () -> void f = () [*x] { print(x); };
+    func f = () [*x] { print(x); };
     f();      // OK
     f();      // OK
     // f cannot be returned or stored in a field
 }
 
 // Error: reference capture cannot escape
-def make_counter() -> () -> int {
+def make_counter() -> func[() -> int] {
     int count = 0;
     return () [*count] -> int {  // Error!
         count += 1;
@@ -1075,8 +1089,8 @@ core Counter {
     public int count;
 }
 
-def make_counter() -> () -> int {
-    Counter c = Counter { count: 0 };
+def make_counter() -> func[() -> int] {
+    Counter c = (Counter) { count: 0 };
     return () -> int {  // Value capture of reference type
         c.count += 1;
         return c.count;
@@ -1138,20 +1152,20 @@ core Entity {
 
 ### 7.3 Instantiation
 
-Core literals always require a type prefix:
+Core literals use cast-style syntax with the type in parentheses:
 
 ```electron
-Player p = Player {
+Player p = (Player) {
     health: 100,
     position: vec3(0, 0, 0)
 };
 
 // Positional syntax (must match declaration order)
-Player p2 = Player { 100, vec3(0, 0, 0) };
+Player p2 = (Player) { 100, vec3(0, 0, 0) };
 
 // Anonymous core literal only in typed context
 Player p3 = { health: 100, position: vec3(0, 0, 0) };  // OK: type known
-do_something({ health: 50 });  // Error: ambiguous, use Player { health: 50 }
+do_something({ health: 50 });  // Error: ambiguous, use (Player) { health: 50 }
 ```
 
 ### 7.4 Nested Cores
@@ -1171,9 +1185,9 @@ core GameObject {
     string name;
 }
 
-GameObject obj = GameObject {
+GameObject obj = (GameObject) {
     id: 1,
-    trans: Transform {
+    trans: (Transform) {
         position: vec3(0, 0, 0),
         rotation: vec3(0, 0, 0),
         scale: vec3(1, 1, 1)
@@ -1186,28 +1200,28 @@ GameObject obj = GameObject {
 
 Cores themselves cannot have methods. All behavior is defined in shells that attach to cores.
 
-### 7.6 Value Cores
+### 7.6 Structs
 
-Value cores are small, stack-allocated data structures with value semantics.
+Structs are small, stack-allocated data structures with value semantics.
 
 **Declaration:**
 
 ```electron
-value core Color {
+struct Color {
     public float r;
     public float g;
     public float b;
     public float a;
 }
 
-value core Rect {
+struct Rect {
     public float x;
     public float y;
     public float width;
     public float height;
 }
 
-value core AABB {
+struct AABB {
     public vec3 min;
     public vec3 max;
 }
@@ -1228,14 +1242,14 @@ value core AABB {
 **Size Calculation:**
 
 ```electron
-value core Example {
+struct Example {
     int a;      // 4 bytes
     int b;      // 4 bytes
     float c;    // 4 bytes
     vec3 d;     // 12 bytes
 }               // Total: 24 bytes (OK)
 
-value core TooBig {
+struct TooBig {
     mat4 a;     // 64 bytes
     int b;      // 4 bytes
 }               // Error: 68 bytes exceeds 64 byte limit
@@ -1243,7 +1257,7 @@ value core TooBig {
 
 **Reference Parameters:**
 
-Value cores can be passed by reference to avoid copying:
+Structs can be passed by reference to avoid copying:
 
 ```electron
 // By value (copy)
@@ -1262,7 +1276,7 @@ def modify_color(mut *Color c) {
     c.r = 1.0;  // OK: modifies caller's value
 }
 
-Color col = Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
+Color col = (Color) { r: 1.0, g: 0.0, b: 0.0, a: 1.0 };
 set_color(col);           // Copies col
 read_color(*col);         // Passes reference
 modify_color(mut *col);   // Passes mutable reference
@@ -1272,8 +1286,8 @@ modify_color(mut *col);   // Passes mutable reference
 
 ```electron
 list[Color] palette = [
-    Color { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
-    Color { r: 0.0, g: 1.0, b: 0.0, a: 1.0 },
+    (Color) { r: 1.0, g: 0.0, b: 0.0, a: 1.0 },
+    (Color) { r: 0.0, g: 1.0, b: 0.0, a: 1.0 },
 ];
 
 // Accessing copies the value out
@@ -1396,7 +1410,7 @@ All shell operations use operators.
 **Push (Attach):**
 
 ```electron
-Player player = Player { hp: 100, position: vec3(0, 0, 0) };
+Player player = (Player) { hp: 100, position: vec3(0, 0, 0) };
 
 player <- Movable;          // Push Movable shell
 player <- Controllable;     // Push Controllable (now on top)
@@ -1462,7 +1476,7 @@ shell Invulnerable {
     }
 }
 
-Entity boss = Entity { hp: 1000, position: vec3(0, 0, 0) };
+Entity boss = (Entity) { hp: 1000, position: vec3(0, 0, 0) };
 boss <- Enemy;
 boss <- Armored;
 
@@ -1551,8 +1565,8 @@ shell Character: Movable, Damageable {
 
     // Both Movable and Damageable define update()
     def update(float dt) {
-        Movable::update(dt);      // Call Movable's implementation
-        Damageable::update(dt);   // Call Damageable's implementation
+        Movable.update(dt);       // Call Movable's implementation
+        Damageable.update(dt);    // Call Damageable's implementation
     }
 }
 ```
@@ -1578,7 +1592,7 @@ unique shell PlayerController {
     }
 }
 
-Player player = Player { hp: 100, position: vec3(0, 0, 0) };
+Player player = (Player) { hp: 100, position: vec3(0, 0, 0) };
 player <- PlayerController;
 player <- PlayerController;  // No-op: shell already attached
 player <<- PlayerController; // Replaces existing with fresh instance
@@ -1712,35 +1726,35 @@ Enums with data cannot be dictionary keys.
 
 ## 10. Error Handling
 
-Electron uses explicit error handling with `Result` types instead of exceptions.
+Electron uses explicit error handling with `result` types instead of exceptions.
 
 ### 10.1 Result Type
 
-`Result` is a built-in generic enum provided by the compiler:
+`result` is a built-in generic enum provided by the compiler:
 
 ```electron
 // This is a compiler built-in, not user-definable
-enum Result[T, E] {
-    Ok(T),
-    Err(E)
+enum result[T, E] {
+    success(T),
+    error(E)
 }
 ```
 
-The compiler provides special support for `Result`:
-- **Type inference:** `Ok(5)` infers `Result[int, ?]` where `?` is determined by context
-- **Error propagation:** The `?` operator works with `Result` types
+The compiler provides special support for `result`:
+- **Type inference:** `success(5)` infers `result[int, ?]` where `?` is determined by context
+- **Error propagation:** The `?` operator works with `result` types
 - **Pattern matching:** Full destructuring support in `match` expressions
 
 ```electron
-def divide(int a, int b) -> Result[int, string] {
+def divide(int a, int b) -> result[int, string] {
     if b == 0 {
-        return Err("Division by zero");
+        return error("Division by zero");
     }
-    return Ok(a / b);
+    return success(a / b);
 }
 
-Result[int, string] r1 = Ok(42);
-Result[int, string] r2 = Err("failed");
+result[int, string] r1 = success(42);
+result[int, string] r2 = error("failed");
 ```
 
 ### 10.2 Error Propagation
@@ -1748,11 +1762,11 @@ Result[int, string] r2 = Err("failed");
 Use `?` to propagate errors automatically:
 
 ```electron
-def load_config(string path) -> Result[Config, Error] {
+def load_config(string path) -> result[Config, Error] {
     File f = open(path)?;           // Returns early if open fails
     string data = read_all(f)?;     // Returns early if read fails
     Config cfg = parse(data)?;      // Returns early if parse fails
-    return Ok(cfg);
+    return success(cfg);
 }
 ```
 
@@ -1761,8 +1775,8 @@ The `?` operator desugars to:
 ```electron
 // expr?  becomes:
 match expr {
-    Ok(v) => v,
-    Err(e) => return Err(e)
+    success(v) => v,
+    error(e) => return error(e)
 }
 ```
 
@@ -1771,27 +1785,27 @@ match expr {
 The error types must match. If they don't, explicit conversion is required:
 
 ```electron
-def process() -> Result[Data, AppError] {
-    // If open returns Result[File, IoError], convert:
+def process() -> result[Data, AppError] {
+    // If open returns result[File, IoError], convert:
     File f = open(path).map_err((IoError e) -> AppError {
-        return AppError { message: e.message, code: 1 };
+        return (AppError) { message: e.message, code: 1 };
     })?;
-    return Ok(process_file(f));
+    return success(process_file(f));
 }
 ```
 
 ### 10.3 Handling Results
 
 ```electron
-Result[int, string] result = divide(10, 2);
+result[int, string] res = divide(10, 2);
 
-match result {
-    Ok(value) => print("Result: {value}"),
-    Err(msg) => print("Error: {msg}")
+match res {
+    success(value) => print("Result: {value}"),
+    error(msg) => print("Error: {msg}")
 }
 
 // Or with if-is pattern
-if result is Ok(value) {
+if res is success(value) {
     use(value);
 }
 ```
@@ -1817,7 +1831,7 @@ core FileError {
     public int code;
 }
 
-def open_file(string path) -> Result[File, FileError] {
+def open_file(string path) -> result[File, FileError] {
     // ...
 }
 ```
@@ -1832,7 +1846,7 @@ def open_file(string path) -> Result[File, FileError] {
 | Division by zero (float) | IEEE 754: `1.0/0.0` → `inf`, `0.0/0.0` → `nan`, `-1.0/0.0` → `-inf` |
 | Shell requirements mismatch | Error at attachment time |
 | `inner!` with no handler | Panic |
-| `entity.require[T]()` missing | Panic |
+| `entity![T]` when core missing | Panic |
 
 **Panic Semantics:**
 
@@ -1861,16 +1875,16 @@ Coroutines enable writing asynchronous game logic in a sequential style.
 
 ### 11.2 Yield Requests
 
-Coroutines communicate with the scheduler via `YieldRequest`, a built-in enum:
+Coroutines communicate with the scheduler via `yield_request`, a built-in enum:
 
 ```electron
 // Built-in yield types (compiler intrinsics)
-enum YieldRequest {
-    NextFrame,                    // Resume next frame
-    Wait(float seconds),          // Resume after duration
-    Until(() -> bool condition),  // Resume when condition true
-    While(() -> bool condition),  // Resume when condition false
-    Join(coro other),             // Resume when other completes
+enum yield_request {
+    next,                             // Resume next frame
+    wait(float seconds),              // Resume after duration
+    until(func[() -> bool] cond),     // Resume when condition true
+    while_true(func[() -> bool] cond),// Resume when condition false
+    join(coro other),                 // Resume when other completes
 }
 ```
 
@@ -1880,11 +1894,11 @@ enum YieldRequest {
 def enemy_patrol() -> coro {
     loop {
         move_to(point_a);
-        yield YieldRequest.Wait(2.0);  // Explicit
+        yield yield_request.wait(2.0);  // Explicit
         // Or with sugar:
-        yield wait(2.0);               // wait() returns YieldRequest.Wait(2.0)
+        yield wait(2.0);                // wait() returns yield_request.wait(2.0)
         move_to(point_b);
-        yield;                         // Sugar for yield YieldRequest.NextFrame
+        yield;                          // Sugar for yield yield_request.next
     }
 }
 
@@ -1913,7 +1927,7 @@ coro fade = spawn fade_in(1.5);
 | `yield;` | Pause until next frame |
 | `yield wait(seconds);` | Pause for duration |
 | `yield until(condition);` | Pause until condition is true |
-| `yield while(condition);` | Pause while condition is true |
+| `yield while_true(condition);` | Pause while condition is true |
 
 ### 11.6 Coroutine Control
 
@@ -1955,7 +1969,7 @@ The engine manages coroutine execution:
 
 1. `spawn` registers coroutine with engine scheduler
 2. Engine calls `resume()` each frame on eligible coroutines
-3. `resume()` returns `YieldRequest` telling engine when to call again
+3. `resume()` returns `yield_request` telling engine when to call again
 4. Engine tracks timers, evaluates conditions, manages dependencies
 
 ---
@@ -1999,14 +2013,14 @@ File extensions are omitted in import paths.
 
 ### 12.3 Exporting
 
-By default, top-level declarations are private to the module. Use `public` to export:
+By default, top-level declarations are private to the module. Use `export` to export:
 
 ```electron
 // utils/math.e
 
-public const PI = 3.14159;
+export const PI = 3.14159;
 
-public def clamp(float x, float min, float max) -> float {
+export def clamp(float x, float min, float max) -> float {
     if x < min { return min; }
     if x > max { return max; }
     return x;
@@ -2017,8 +2031,8 @@ def internal_helper() {
     // ...
 }
 
-public core Vector2 {
-    public float x;
+export core Vector2 {
+    public float x;  // public for field visibility
     public float y;
 }
 ```
@@ -2133,20 +2147,23 @@ core Transform {
 
 // Attach cores to entity
 entity player = entity.spawn();
-player.add(PlayerData { hp: 100, position: vec3(0, 0, 0), score: 0 });
-player.add(Transform { position: vec3(0, 0, 0), rotation: vec3(0, 0, 0), scale: vec3(1, 1, 1) });
+player.add((PlayerData) { hp: 100, position: vec3(0, 0, 0), score: 0 });
+player.add((Transform) { position: vec3(0, 0, 0), rotation: vec3(0, 0, 0), scale: vec3(1, 1, 1) });
 
 // Retrieve cores (nullable if missing)
-PlayerData? data = player.get[PlayerData]();
+PlayerData? data = player[PlayerData];
 
 // Retrieve cores (panic if missing)
-Transform t = player.require[Transform]();
+Transform t = player![Transform];
 
-// Check for core
-if player.has[PlayerData]() { }
+// Check for core (in boolean context, resolves to true/false)
+if player[PlayerData] { }
 
-// Remove core
-player.remove[PlayerData]();
+// Remove core and return it
+PlayerData removed = player[PlayerData].detach();
+
+// Panic if core doesn't exist before detaching
+PlayerData removed2 = player[PlayerData]!.detach();
 ```
 
 **Shell Attachment:**
@@ -2154,7 +2171,7 @@ player.remove[PlayerData]();
 Shells attach to cores, not entities:
 
 ```electron
-PlayerData data = player.require[PlayerData]();
+PlayerData data = player![PlayerData];
 data <- Controllable;
 data <- Damageable;
 
@@ -2171,9 +2188,9 @@ if data >- Frozen {
 list[entity] enemies = scene.query[Enemy, Transform]();
 
 // Iterate with core access
-for e in enemies {
-    Enemy enemy = e.require[Enemy]();
-    Transform t = e.require[Transform]();
+for entity e in enemies {
+    Enemy enemy = e![Enemy];
+    Transform t = e![Transform];
     // ...
 }
 ```
@@ -2397,11 +2414,12 @@ list[int] items = r.to_list();
 
 ```
 program         → declaration* EOF
-declaration     → constDecl | coreDecl | shellDecl | enumDecl
+declaration     → constDecl | coreDecl | structDecl | shellDecl | enumDecl
                 | funcDecl | importDecl | typeAlias
 
 constDecl       → decorator* "const" IDENTIFIER "=" expression ";"
-coreDecl        → "value"? "core" IDENTIFIER "{" fieldDecl* "}"
+coreDecl        → "core" IDENTIFIER "{" fieldDecl* "}"
+structDecl      → "struct" IDENTIFIER "{" fieldDecl* "}"
 shellDecl       → "strict"? "unique"? "shell" IDENTIFIER (":" IDENTIFIER ("," IDENTIFIER)*)?
                   "{" requiresDecl? (fieldDecl | funcDecl)* "}"
 enumDecl        → "enum" IDENTIFIER "{" enumVariant ("," enumVariant)* "}"
@@ -2420,10 +2438,10 @@ type            → primitiveType | collectionType | funcType | builtinType
 primitiveType   → "int" | "float" | "bool" | "string"
                 | "vec2" | "vec3" | "vec4" | "mat2" | "mat3" | "mat4" | "range"
 collectionType  → "list" "[" type "]" | "dict" "[" type "->" type "]"
-funcType        → "(" typeList? ")" "->" type
+funcType        → "func" "[" "(" typeList? ")" "->" type "]"
 builtinType     → "coro" ("[" type "]")? | "entity"
-                | "Result" "[" type "," type "]"
-tupleType       → "(" type ("," type)+ ")"
+                | "result" "[" type "," type "]"
+tupleType       → "tuple" "[" type ("," type)+ "]"
 nullableType    → type "?"
 
 statement       → exprStmt | varDecl | assignment | ifStmt | whileStmt
@@ -2481,7 +2499,7 @@ closure         → "(" paramList? ")" captureList? ("->" type)? block
 captureList     → "[" captureItem ("," captureItem)* "]"
 captureItem     → "*" IDENTIFIER
 
-qualifiedCall   → IDENTIFIER "::" IDENTIFIER "(" argList? ")"
+qualifiedCall   → IDENTIFIER "." IDENTIFIER "(" argList? ")"
 
 enumVariant     → IDENTIFIER ("(" type ("," type)* ")")?
 
@@ -2541,7 +2559,7 @@ namedArgs       → IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*
 | `list[T]` | pointer |
 | `dict[K->V]` | pointer |
 | Core | pointer |
-| Value core | sum of fields (max 64) |
+| Struct | sum of fields (max 64) |
 | Tuple | sum of elements |
 
 ---
@@ -2564,7 +2582,7 @@ namedArgs       → IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*
 | `list[T]` | `[]` |
 | `dict[K->V]` | `{}` |
 | Core | All fields at defaults |
-| Value core | All fields at defaults |
+| Struct | All fields at defaults |
 | Nullable type | `null` |
 
 ---
