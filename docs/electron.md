@@ -1,13 +1,13 @@
 # Electron Language Specification
 
-**Version:** 2.0
+**Version:** 2.2
 **Status:** Draft
 **File Extension:** `.e`
 
 Electron is a statically-typed scripting language designed for the Atom game engine. It features a unique composition-based object model using "cores" (data) and "shells" (behavior) instead of traditional classes, enabling flexible runtime behavior modification through shell stacking.
 
 **Architecture Overview:**
-- **Entity:** Opaque engine handle. An ID that groups components.
+- **Entity:** Opaque engine handle with generation counter. An ID that groups components.
 - **Core:** Data container. Attachable to entities as components.
 - **Shell:** Behavior layer. Stacks onto cores, not entities directly.
 
@@ -21,7 +21,7 @@ Electron is a statically-typed scripting language designed for the Atom game eng
 4. [Operators](#4-operators)
 5. [Control Flow](#5-control-flow)
 6. [Functions](#6-functions)
-7. [Cores](#7-cores)
+7. [Cores and Structs](#7-cores-and-structs)
 8. [Shells](#8-shells)
 9. [Enums](#9-enums)
 10. [Error Handling](#10-error-handling)
@@ -29,6 +29,8 @@ Electron is a statically-typed scripting language designed for the Atom game eng
 12. [Modules and Imports](#12-modules-and-imports)
 13. [Engine Integration](#13-engine-integration)
 14. [Standard Library](#14-standard-library)
+15. [Memory Model](#15-memory-model)
+16. [Concurrency Model](#16-concurrency-model)
 
 ---
 
@@ -60,17 +62,18 @@ Identifiers must begin with a letter or underscore, followed by letters, digits,
 
 **Reserved Keywords:**
 ```
-bool        break       const       continue    core
-coro        def         defer       dict        do
-else        enum        error       export      false
-float       for         from        func        if
-import      in          inner       int         list
-loop        match       mat2        mat3        mat4
-mut         null        public      range       readonly
-requires    result      return      shell       strict
-string      struct      success     then        true
-tuple       type        unique      vec2        vec3
-vec4        while       yield       yield_request
+allows      bool        break       const       continue
+core        coro        def         defer       dict
+do          else        enum        error       export
+false       float       for         from        func
+if          import      in          inner       int
+list        loop        match       mat2        mat3
+mat4        mut         null        outer       public
+range       readonly    requires    result      return
+sealed      shell       strict      string      struct
+success     then        true        tuple       type
+unique      vec2        vec3        vec4        while
+yield       yield_request
 ```
 
 **Reserved for Future Use:**
@@ -84,14 +87,16 @@ with        as          is          sizeof
 ### 1.4 Numeric Literals
 
 ```electron
-42              // Integer
+42              // Integer (decimal)
 1_000_000       // Integer with separators
-0xFF            // Hexadecimal
-0b1010          // Binary
+0xFF            // Hexadecimal (0x prefix)
+0b1010          // Binary (0b prefix)
 3.14            // Float
 3.14f           // Explicit float
 1.5e-10         // Scientific notation
 ```
+
+**Note:** Octal literals are not supported. Use hexadecimal or decimal instead.
 
 ### 1.5 String Literals
 
@@ -135,6 +140,20 @@ Expressions within `{}` are evaluated and converted to strings. String interpola
 "Hello, " + name.to_string() + "!"
 ```
 
+**Important:** Interpolating nullable values is a compile error:
+
+```electron
+string? s = null;
+string msg = "Hello {s}";       // Compile error: cannot interpolate nullable
+string msg = "Hello {s ?? ""}"; // OK: provide default
+```
+
+**String Semantics:**
+
+- **Equality:** String comparison (`==`, `!=`) uses value equality (content comparison), not reference equality
+- **Interning:** String literals are interned at compile time (identical literals share storage). Runtime-created strings (concatenation, interpolation) are NOT automatically interned
+- **Concatenation:** Creates a new string allocation. The result is not interned
+
 **String Optimizations:**
 - Compile-time folding: `"Error: " + "404"` → `"Error: 404"`
 - Identical string literals are interned (share same reference)
@@ -149,11 +168,13 @@ Electron is statically typed. All types must be explicitly declared.
 
 | Type | Description | Size |
 |------|-------------|------|
-| `int` | Signed integer | 32-bit |
-| `float` | Floating-point number | 32-bit |
+| `int` | Signed 32-bit integer | 4 bytes |
+| `float` | 32-bit floating-point number | 4 bytes |
 | `bool` | Boolean value (`true` or `false`) | 1 byte |
 
 **Integer Overflow:** Integer arithmetic wraps on overflow (two's complement).
+
+**Note:** Only 32-bit signed integers are supported in v1.0. Extended integer types (`int64`, `uint32`, etc.) are planned for v2.0.
 
 ### 2.2 Vector and Matrix Types
 
@@ -190,16 +211,40 @@ vec3 zyx = v.zyx;
 
 // Swizzle assignment (non-aliasing patterns only)
 v.xy = vec2(5.0, 6.0);  // OK
-v.xx = vec2(1.0, 2.0);  // Error: aliasing pattern
+v.xx = vec2(1.0, 2.0);  // Error: 'x' appears twice in write pattern
+```
+
+**Swizzle Assignment Rules:**
+
+1. Write patterns must not repeat components
+2. Self-referential swizzles where reads and writes overlap are forbidden:
+
+```electron
+v.xz = v.zx;  // Error: reads and writes overlap (x and z)
+v.xy = v.yx;  // Error: reads and writes overlap
+v.xy = v.zw;  // OK: no overlap (reads z,w; writes x,y)
+
+// Workaround for swaps:
+float temp = v.x;
+v.x = v.z;
+v.z = temp;
 ```
 
 ### 2.3 Range Type
 
 `range` is a built-in value type representing a sequence of integers.
 
-| Type | Description | Size |
-|------|-------------|------|
-| `range` | Integer range with bounds and inclusivity | 9 bytes |
+| Type | Description | Size | Alignment |
+|------|-------------|------|-----------|
+| `range` | Integer range with bounds and inclusivity | 12 bytes | 4 bytes |
+
+**Memory Layout:**
+```
+Offset 0-3:  start (int32)
+Offset 4-7:  end (int32)
+Offset 8:    inclusive (bool)
+Offset 9-11: padding (3 bytes)
+```
 
 **Construction:**
 
@@ -246,7 +291,7 @@ if (0..100).contains(x) { }
 
 ### 2.4 Tuple Types
 
-Tuples are fixed-size, heterogeneous value types.
+Tuples are fixed-size, heterogeneous value types. Tuples must have at least two elements.
 
 **Declaration and Construction:**
 
@@ -257,9 +302,17 @@ tuple[string, int, bool] record = ("Alice", 30, true);
 
 **Access:**
 
+Tuple element access requires a **compile-time constant** index:
+
 ```electron
-int x = point[0];    // 10
-int y = point[1];    // 20
+int x = point[0];           // OK: literal index
+int y = point[1];           // OK: literal index
+
+@comptime const IDX = 1;
+string s = record[IDX];     // OK: comptime constant
+
+int i = get_index();
+??? = point[i];             // Compile error: index must be compile-time constant
 ```
 
 **Destructuring:**
@@ -288,7 +341,18 @@ def min_max(list[int] nums) -> tuple[int, int] {
 tuple[int, int] (lo, hi) = min_max(numbers);
 ```
 
-Tuples are value types: copied on assignment, cannot be nullable. Tuples must have at least two elements.
+**Parentheses vs Tuples:**
+
+Parentheses for grouping do not create tuples:
+
+```electron
+int x = (5);           // Just 5, grouped (NOT a tuple)
+int y = (5 + 3) * 2;   // Grouping for precedence
+
+tuple[int, int] pair = (1, 2);  // Tuple (2+ elements required)
+```
+
+Tuples are value types: copied on assignment, cannot be nullable.
 
 ### 2.5 String Type
 
@@ -296,7 +360,22 @@ Tuples are value types: copied on assignment, cannot be nullable. Tuples must ha
 string greeting = "Hello";
 ```
 
-Strings are immutable. Operations that modify a string return a new string.
+Strings are immutable references. Operations that modify a string return a new string.
+
+**Character Access:**
+
+Electron does not have a dedicated `char` type. Use string methods:
+
+```electron
+string s = "hello";
+string ch = s.char_at(0);      // "h" (single-char string)
+int code = s.code_at(0);       // 104 (Unicode code point)
+string from_code = string.from_code(104);  // "h"
+
+// Iterate characters:
+for string ch in s.chars() { }
+for int code in s.codes() { }
+```
 
 ### 2.6 Collection Types
 
@@ -310,14 +389,48 @@ list[string] names = ["Alice", "Bob"];
 list[vec3] points = [vec3(0, 0, 0), vec3(1, 1, 1)];
 ```
 
+**Collection Type Inference:**
+
+Collection literals require explicit element types:
+
+```electron
+list[int] nums = [1, 2, 3];    // OK: type on variable
+list nums = [1, 2, 3];         // Error: element type required
+list[int] empty = [];          // OK
+list empty = [];               // Error
+
+// Inferred from function parameter type:
+def sum(list[int] nums) -> int { ... }
+sum([1, 2, 3]);                // OK: inferred from parameter
+```
+
 **Dictionary:**
 
-A key-value mapping. Keys must be hashable: primitives, strings, or enums without data.
+A key-value mapping. Keys must be hashable.
 
 ```electron
 dict[string -> int] ages = {"alice": 30, "bob": 25};
 dict[int -> string] lookup = {1: "one", 2: "two"};
 ```
+
+**Hashable Types (valid as dictionary keys):**
+
+| Type | Hashable | Notes |
+|------|----------|-------|
+| `int` | Yes | |
+| `float` | Yes | NaN hashes consistently but NaN != NaN |
+| `bool` | Yes | |
+| `string` | Yes | Content-based hash |
+| `range` | Yes | Hash of (start, end, inclusive) |
+| Simple enum | Yes | Variants without data |
+| Data enum | No | Variants with data are not hashable |
+| `tuple[T...]` | Yes, if all T hashable | Recursive check |
+| `struct` | Yes, if all fields hashable | Recursive check |
+| `vec*`, `mat*` | Yes | Component-wise hash |
+| Core | No | Reference types use identity, not value |
+| `list`, `dict` | No | Mutable collections |
+| `func` | No | Functions |
+| Type aliases | Inherits from underlying type | |
 
 ### 2.7 Function Type
 
@@ -346,6 +459,19 @@ def apply(int x, func[(int) -> int] transform) -> int {
 // Uninitialized function variables must have explicit types
 func[(int) -> int] pending_transform;  // OK
 func pending;                           // Error: type required without initialization
+```
+
+**Function Overloading:**
+
+Electron does **not** support function overloading. Each function name must be unique within its scope:
+
+```electron
+def foo(int x) -> int { return x; }
+def foo(float x) -> float { return x; }  // Error: 'foo' already defined
+
+// Use different names instead:
+def foo_int(int x) -> int { return x; }
+def foo_float(float x) -> float { return x; }
 ```
 
 ### 2.8 Nullable Types
@@ -401,6 +527,19 @@ string? name = null;
 string display = name ?? "Unknown";  // "Unknown"
 ```
 
+**Null in String Operations:**
+
+Concatenating nullable values is a compile error:
+
+```electron
+string? s = null;
+string msg = "Hello " + s;     // Compile error: cannot concat nullable
+
+// Solutions:
+string msg = "Hello " + (s ?? "");           // Explicit default
+string msg = "Hello " + s.to_string_or("");  // Method approach
+```
+
 **Runtime Behavior:**
 
 Accessing a null value without safe access (`?.`) or null check causes a panic with a stack trace.
@@ -427,7 +566,40 @@ PlayerId p = (PlayerId) { value: 5 };
 // e == p  // Compile error: different types
 ```
 
-### 2.10 Type Coercion
+### 2.10 Generics
+
+Electron v1.0 provides built-in generic types but does **not** support user-defined generics:
+
+**Built-in Generics:**
+- `list[T]` - Dynamic array
+- `dict[K -> V]` - Hash map
+- `result[T, E]` - Error handling
+- `coro[T]` - Coroutine with return value
+- `func[(Args) -> Ret]` - Function type
+
+**Not Supported (v1.0):**
+
+```electron
+core Container[T] { public T value; }     // Error: user generics not supported
+shell Processor[T] { }                     // Error
+def identity[T](T x) -> T { return x; }   // Error
+```
+
+**Workarounds:**
+
+```electron
+// Use specific types:
+core IntContainer { public int value; }
+core StringContainer { public string value; }
+
+// Use enums for type unions:
+enum Value { Int(int), Float(float), String(string) }
+core Container { public Value value; }
+```
+
+User-defined generics are planned for v2.0.
+
+### 2.11 Type Coercion
 
 Type coercion is always explicit using cast syntax:
 
@@ -450,7 +622,7 @@ int rounded = (int) pi;   // 3
 | `list[T]` | `bool` | Empty → `false`, else `true` |
 | `dict[K->V]` | `bool` | Empty → `false`, else `true` |
 
-### 2.11 Value vs Reference Semantics
+### 2.12 Value vs Reference Semantics
 
 | Category | Types | Semantics |
 |----------|-------|-----------|
@@ -517,10 +689,35 @@ Use `@comptime` to require compile-time evaluation:
 @comptime const BAD = vec3(0, 0, 0);     // Error: not comptime-evaluable
 ```
 
-`@comptime` constants are inlined by the compiler and support:
-- Primitive literals (`int`, `float`, `bool`, `string`)
-- Arithmetic on other `@comptime` constants
-- String concatenation of `@comptime` constants
+**@comptime Evaluation Rules:**
+
+The following are valid in @comptime context:
+
+| Operation | Allowed | Example |
+|-----------|---------|---------|
+| Integer/float/bool/string literals | Yes | `42`, `3.14`, `true`, `"hello"` |
+| Arithmetic on comptime values | Yes | `PI * 2` |
+| String concatenation of comptime | Yes | `"v" + "1"` |
+| Comparison operators | Yes | `DEBUG && VERBOSE` |
+| Conditional expressions | Yes | `if DEBUG then 1 else 0` |
+| @comptime function calls | Yes | See below |
+| Vector/matrix construction | No | Requires runtime |
+| Collection literals | No | `[1,2,3]` |
+| String methods | No | `"foo".length` |
+| Core construction | No | |
+
+**@comptime Functions:**
+
+```electron
+@comptime
+def factorial(int n) -> int {
+    return if n <= 1 then 1 else n * factorial(n - 1);
+}
+
+@comptime const FACT_10 = factorial(10);  // Computed at compile time
+```
+
+Limitations: No loops (use recursion), no mutable state, maximum recursion depth: 1000.
 
 **Conditional Compilation:**
 
@@ -549,6 +746,8 @@ Entity e = (Entity) { id: 42, hp: 100 };
 e.hp = 50;    // OK
 e.id = 99;    // Error: readonly field
 ```
+
+**Note:** `readonly` is only valid for core fields, not struct fields.
 
 ### 3.4 Scope
 
@@ -610,6 +809,19 @@ Core instances use reference equality by default. Override with `__eq__` in a sh
 | `<<` | Left shift |
 | `>>` | Right shift |
 
+**Flags Pattern:**
+
+```electron
+@comptime const FLAG_A = 1;       // 0b0001
+@comptime const FLAG_B = 2;       // 0b0010
+@comptime const FLAG_C = 4;       // 0b0100
+
+int flags = FLAG_A | FLAG_C;      // 0b0101
+if (flags & FLAG_A) != 0 { }      // Check flag
+flags = flags | FLAG_B;           // Set flag
+flags = flags & ~FLAG_A;          // Clear flag
+```
+
 ### 4.5 Assignment Operators
 
 | Operator | Equivalent |
@@ -651,7 +863,7 @@ See [Section 8: Shells](#8-shells) for detailed usage.
 |----------|-------------|
 | `?.` | Safe member access (null-safe) |
 | `??` | Null coalescing |
-| `?` | Error propagation |
+| `?` | Error propagation (postfix) |
 | `[]` | Index access |
 | `.` | Member access |
 | `()` | Function call |
@@ -806,6 +1018,20 @@ def process_file(string path) -> result[Data, Error] {
 - Defers run on normal exit, early return, and error propagation (`?`)
 - Defers do **not** run on panic
 
+**Restrictions:**
+
+`defer` blocks cannot contain control flow statements:
+
+```electron
+def foo() -> int {
+    defer { return 5; }    // Error: return not allowed in defer
+    defer { break; }       // Error: break not allowed in defer
+    defer { yield; }       // Error: yield not allowed in defer
+    defer { defer x; }     // Error: nested defer not allowed
+    return 10;
+}
+```
+
 ```electron
 def example() {
     defer print("first");   // Runs third
@@ -847,7 +1073,7 @@ match score {
     _ => "Invalid"
 }
 
-// Guard patterns
+// Guard patterns (short-circuit evaluation applies)
 match x {
     n if n < 0 => "negative",
     n if n > 100 => "large",
@@ -891,6 +1117,27 @@ match res {
 }
 ```
 
+**List Destructuring Rest Patterns:**
+
+Rest patterns capture remaining elements as `list[T]`. Only trailing rest is allowed:
+
+```electron
+match items {
+    []                       => "empty",
+    [only]                   => "single: {only}",
+    [first, second]          => "exactly two",
+    [first, ...rest]         => "first={first}, rest has {rest.length} items",
+    [first, second, ...rest] => "at least two",
+}
+
+// If items: list[int], then rest: list[int]
+
+// INVALID patterns:
+[...front, last]           // Error: rest must be trailing
+[first, ...middle, last]   // Error: rest must be trailing
+[...a, ...b]               // Error: multiple rest patterns
+```
+
 **Exhaustiveness:**
 
 Match expressions must be exhaustive. Guards do not count toward exhaustiveness:
@@ -907,11 +1154,25 @@ match x {
     n if n < 0 => "negative",
     n => "non-negative"  // Catches everything else
 }
+```
 
-// Also correct: explicit wildcard
-match x {
-    n if n < 0 => "negative",
-    _ => "non-negative"
+**Data Enum Exhaustiveness:**
+
+Patterns with literal values on data enum variants don't contribute to exhaustiveness:
+
+```electron
+enum State { Idle, Attacking(int) }
+
+// NOT exhaustive - Attacking(0) is just one value:
+match state {
+    State.Idle => ...,
+    State.Attacking(0) => ...,
+}  // Error: non-exhaustive
+
+// Exhaustive - capture variable matches all:
+match state {
+    State.Idle => ...,
+    State.Attacking(dmg) => ...,  // dmg captures ANY int
 }
 ```
 
@@ -939,6 +1200,8 @@ def greet(string name) {
 ```
 
 **Default Parameters:**
+
+Default parameters are evaluated **left-to-right, once per call**:
 
 ```electron
 def spawn_enemy(vec3 position, int health = 100, float scale = 1.0) {
@@ -1098,6 +1361,27 @@ def make_counter() -> func[() -> int] {
 }
 ```
 
+**yield in Closures:**
+
+`yield` is only valid inside functions returning `coro` or `coro[T]`:
+
+```electron
+def not_a_coro() {
+    yield wait(1.0);    // Compile error: yield outside coroutine
+}
+
+def valid_coro() -> coro {
+    yield wait(1.0);    // OK
+}
+
+def outer_coro() -> coro {
+    func f = () {
+        yield;          // Error: closure is not a coroutine
+    };
+    yield;              // OK: in coroutine
+}
+```
+
 ### 6.4 Forward References
 
 Functions can reference other functions defined later in the file. The compiler uses two-pass resolution:
@@ -1114,11 +1398,27 @@ def bar() {
 
 ---
 
-## 7. Cores
+## 7. Cores and Structs
 
-Cores are data structures similar to C structs. They hold state but define no behavior.
+Electron provides two aggregate data types with different use cases:
+
+| Feature | Core | Struct |
+|---------|------|--------|
+| Semantics | Reference | Value |
+| Shell attachment | Yes | No |
+| Nullable | Yes | No |
+| Max size | Unlimited | 64 bytes |
+| Passed to functions | By reference | By copy (unless `*`) |
+| Entity attachment | Yes | No |
+| Use case | Game objects, components | Small data (colors, rects, AABBs) |
+
+**When to use which:**
+- **Core:** Anything that needs behavior (shells), identity, or is part of the ECS
+- **Struct:** Small, behavior-less data bundles passed by value (like GLSL's vec types)
 
 ### 7.1 Core Declaration
+
+Cores are data structures similar to C structs. They hold state but define no behavior.
 
 ```electron
 core Entity {
@@ -1166,6 +1466,24 @@ Player p2 = (Player) { 100, vec3(0, 0, 0) };
 // Anonymous core literal only in typed context
 Player p3 = { health: 100, position: vec3(0, 0, 0) };  // OK: type known
 do_something({ health: 50 });  // Error: ambiguous, use (Player) { health: 50 }
+do_something((Player) { health: 50 });  // OK: explicit
+```
+
+**Field Initialization Order:**
+
+Fields initialize in declaration order. Later fields can reference earlier ones:
+
+```electron
+core Foo {
+    int a = 5;
+    int b = a + 1;      // OK: a is initialized first
+    int c = b * 2;      // OK: b is initialized
+    int d = e;          // Error: e not yet initialized
+    int e = 10;
+}
+
+// Explicit construction overrides defaults:
+Foo f = (Foo) { a: 10, b: 20 };  // a=10, b=20 (not a+1), c=40, e=10
 ```
 
 ### 7.4 Nested Cores
@@ -1238,6 +1556,7 @@ struct AABB {
 | Copied when passed to functions | Unless ref parameter |
 | Can contain only value types | No `string`, `list`, or reference cores |
 | No recursive/self-referential | Would require indirection |
+| No `readonly` keyword | Value types are always copied; readonly is meaningless |
 
 **Size Calculation:**
 
@@ -1253,6 +1572,27 @@ struct TooBig {
     mat4 a;     // 64 bytes
     int b;      // 4 bytes
 }               // Error: 68 bytes exceeds 64 byte limit
+```
+
+**Struct Field Visibility:**
+
+Struct fields follow the same visibility rules as cores. Private fields are accessible within the same module:
+
+```electron
+struct Color {
+    public float r;
+    public float g;
+    public float b;
+    float internal_alpha;  // Private: same-module access only
+}
+
+// In same module:
+Color c = (Color) { r: 1.0, g: 0.0, b: 0.0, internal_alpha: 1.0 };
+float a = c.internal_alpha;  // OK
+
+// In different module:
+Color c = (Color) { r: 1.0, g: 0.0, b: 0.0 };  // internal_alpha = 0.0 (default)
+float a = c.internal_alpha;  // Error: private field
 ```
 
 **Reference Parameters:**
@@ -1319,14 +1659,15 @@ shell Movable {
 }
 ```
 
-**The `core` and `inner` Keywords:**
+**The `core`, `inner`, and `outer` Keywords:**
 
-Within a shell, two special keywords are available:
+Within a shell, three special keywords are available:
 
 | Keyword | Type | Description |
 |---------|------|-------------|
 | `core` | interface type | Reference to the attached core instance. Type-checked against the shell's requirements. |
-| `inner` | shell reference | Reference to the next shell in the stack. Used for delegation. |
+| `inner` | shell reference | Reference to shells below in the stack. Used for delegation toward the core. |
+| `outer` | shell reference | Reference to shells above in the stack. Used for upward service lookup. |
 
 The `core` keyword provides access to fields declared in the shell's `requires` block. The compiler type-checks `core` against the requirements:
 
@@ -1337,6 +1678,18 @@ shell Movable {
     def move(float dx, float dy) {
         core.position.x += dx;    // OK: position is in requirements
         core.health -= 10;         // Compile error: health not in requirements
+    }
+}
+```
+
+**Built-in Core Properties:**
+
+Every core has access to its owning entity:
+
+```electron
+shell EntityAware {
+    def get_entity() -> entity {
+        return core.entity;  // Built-in: every core knows its entity
     }
 }
 ```
@@ -1357,6 +1710,25 @@ shell Movable {
 ```
 
 This shell can only attach to cores with `position` and `velocity` fields of type `vec3`.
+
+**Requirement Checking:**
+
+Shell requirements are verified at attachment time (runtime). The compiler performs best-effort static analysis when the core type is statically known:
+
+```electron
+core Enemy { int hp; }
+shell Movable { requires { vec3 position } }
+
+Enemy e = (Enemy) { hp: 100 };
+e <- Movable;  // Compile error: Enemy lacks 'position: vec3'
+```
+
+When the core type is dynamic (e.g., from entity lookup), checking defers to runtime:
+
+```electron
+// Runtime panic if core lacks required fields:
+// "Cannot attach shell 'Movable' to core: missing required field 'position' of type 'vec3'"
+```
 
 **Shell Interface Privacy:**
 
@@ -1379,11 +1751,12 @@ shell Debugger {
 
 ### 8.3 Shell State
 
-Shells can have their own state, stored per-attachment:
+Shells can have their own state, stored per-attachment. State initializes **at push time**:
 
 ```electron
 shell Cooldown {
-    float time_remaining = 0.0;
+    float time_remaining = 0.0;  // Initialized when shell is pushed
+    float started_at = time.now();  // Also at push time
 
     def start(float duration) {
         time_remaining = duration;
@@ -1515,13 +1888,102 @@ shell Frozen {
 }
 ```
 
-**Inner Call Behavior:**
+**Basic Inner Call Behavior:**
 
-| Syntax | Behavior |
-|--------|----------|
-| `inner.method()` | Silent no-op if no handler below |
-| `inner!.method()` | Panic if no handler below |
-| `inner?.method()` | Explicit silent no-op (same as `inner.method()`) |
+| Syntax | Handler Exists | No Handler |
+|--------|----------------|------------|
+| `inner.method()` | Returns handler's value | Returns default for return type |
+| `inner!.method()` | Returns handler's value | Panic |
+| `inner?.method()` | Returns handler's value | Returns default (explicit) |
+
+**Return Value Semantics:**
+
+When `inner.method()` has no handler below, the return value is the type's default:
+- `int` → `0`
+- `float` → `0.0`
+- `bool` → `false`
+- `string` → `""`
+- Nullable types → `null`
+- Collections → empty
+
+```electron
+shell Armored {
+    def get_defense() -> int {
+        return inner.get_defense() + 10;  // Returns 10 if no handler (0 + 10)
+    }
+}
+
+shell BaseStats {
+    def get_defense() -> int {
+        return 5;
+    }
+}
+
+// With both shells: get_defense() returns 15
+// With only Armored: get_defense() returns 10
+```
+
+**Typed Inner Calls:**
+
+Use bracket syntax to call a specific shell type in the stack:
+
+```electron
+inner[ShellType].method(args)     // First shell of type T below
+inner[ShellType]!.method(args)    // Panic if T not found
+inner[ShellType]?.method(args)    // Silent fallback (explicit)
+```
+
+Typed inner calls search downward from the current shell, looking for the first shell of the specified type. Shells between the current shell and the target are skipped:
+
+```electron
+// Stack (top to bottom): Armored -> Blessed -> Cursed -> BaseStats
+
+shell Armored {
+    def get_defense() -> int {
+        // inner.get_defense() - calls Blessed.get_defense() (first below)
+        // inner[BaseStats].get_defense() - skips Blessed and Cursed, calls BaseStats
+        return inner[BaseStats].get_defense() + armor_bonus;
+    }
+}
+```
+
+**Typed Inner Call Behavior:**
+
+| Syntax | Shell Found | Shell Not Found |
+|--------|-------------|-----------------|
+| `inner[T].method()` | Calls T's method | Returns default value |
+| `inner[T]!.method()` | Calls T's method | Panic: "Shell 'T' not found below 'Current'" |
+| `inner[T]?.method()` | Calls T's method | Returns default value (explicit) |
+
+**Example: Direct Delegation to Specific Shell:**
+
+```electron
+shell DamageProcessor {
+    requires { int hp }
+
+    def take_damage(int amount) {
+        // Apply damage through the normal chain
+        inner.take_damage(amount);
+    }
+
+    def take_pure_damage(int amount) {
+        // Skip all modifiers, go directly to HealthManager
+        inner[HealthManager]!.apply_damage(amount);
+    }
+}
+
+shell HealthManager {
+    requires { int hp }
+
+    def apply_damage(int amount) {
+        core.hp -= amount;
+    }
+
+    def take_damage(int amount) {
+        apply_damage(amount);
+    }
+}
+```
 
 **Strict Shells:**
 
@@ -1538,22 +2000,136 @@ strict shell DamageProcessor {
 }
 ```
 
-### 8.7 Shell Composition
+### 8.7 Upward Delegation with `outer`
 
-Shells can include other shells (like mixins):
+The `outer` keyword enables upward traversal of the shell stack, allowing lower shells to access services or context provided by shells above them.
+
+| Keyword | Direction | Use Case |
+|---------|-----------|----------|
+| `inner` | Downward (toward core) | Delegation, decoration, base implementation |
+| `outer` | Upward (toward stack top) | Context access, coordination, service lookup |
+
+**Syntax:**
 
 ```electron
-shell Character: Movable, Damageable {
-    requires { vec3 position, int hp }
+outer.method(args)              // First shell above with this method
+outer!.method(args)             // Panic if no handler above
+outer?.method(args)             // Silent fallback (explicit)
 
-    // Additional methods specific to Character
-    def interact() {
-        print("Interacting...");
+outer[ShellType].method(args)   // First shell of type T above
+outer[ShellType]!.method(args)  // Panic if T not found above
+outer[ShellType]?.method(args)  // Silent fallback if T not found
+```
+
+**Outer Call Behavior:**
+
+| Syntax | Shell Found | Shell Not Found |
+|--------|-------------|-----------------|
+| `outer.method()` | Calls first above with method | Returns default value |
+| `outer!.method()` | Calls first above with method | Panic |
+| `outer[T].method()` | Calls T's method | Returns default value |
+| `outer[T]!.method()` | Calls T's method | Panic: "Shell 'T' not found above 'Current'" |
+
+**Example: Accessing Context from Above:**
+
+```electron
+// Stack (top to bottom): CharacterController -> StatModifier -> Equipment -> BaseStats
+
+shell CharacterController {
+    requires { int hp, int max_hp }
+
+    def get_max_hp() -> int {
+        return core.max_hp;
+    }
+
+    def get_hp_percent() -> float {
+        return (float)core.hp / (float)core.max_hp;
+    }
+}
+
+shell Equipment {
+    requires inner { CharacterController }
+
+    int armor = 0;
+
+    def get_effective_armor() -> int {
+        // Access CharacterController above to check HP
+        float hp_percent = outer[CharacterController].get_hp_percent();
+
+        // Armor effectiveness scales with HP
+        return (int)(armor * hp_percent);
+    }
+
+    def get_equipment_summary() -> string {
+        // Access level from CharacterController
+        int level = outer[CharacterController].get_level();
+        return "Level {level} - Armor: {armor}";
     }
 }
 ```
 
-This copies all methods from `Movable` and `Damageable` into `Character`.
+**Cycle Detection:**
+
+Mutual recursion between `inner` and `outer` calls can create infinite loops. The runtime detects and prevents this:
+
+```electron
+shell A {
+    def foo() {
+        outer[B].bar();  // Calls up to B
+    }
+}
+
+shell B {
+    def bar() {
+        inner[A].foo();  // Calls down to A - infinite loop!
+    }
+}
+
+// Runtime behavior: Panic with "Cycle detected: A.foo -> B.bar -> A.foo"
+```
+
+The runtime maintains a call chain during method dispatch:
+1. Each method invocation is tracked as `(shell_instance, method_name)`
+2. Before dispatching, check if this pair exists in the current call chain
+3. If duplicate found, panic with cycle trace
+4. Call chain is cleared when the top-level call completes
+
+### 8.8 Shell Composition
+
+Shells can include other shells (like mixins). Composed shells are **flattened into the composing shell** at compile time. The composed shell does NOT appear in the runtime shell stack.
+
+```electron
+shell Movable {
+    def move(float dx, float dy) { core.position.x += dx; core.position.y += dy; }
+    def update(float dt) { /* Movable update */ }
+}
+
+shell Damageable {
+    def take_damage(int amount) { core.hp -= amount; }
+    def update(float dt) { /* Damageable update */ }
+}
+
+shell Character: Movable, Damageable {
+    requires { vec3 position, int hp }
+
+    // Character now has: move(), take_damage()
+    // update() conflicts - must be resolved explicitly
+
+    def update(float dt) {
+        Movable.update(dt);       // Call composed implementation directly
+        Damageable.update(dt);    // Not inner calls - these are static
+    }
+
+    def special_move() {
+        move(10, 0);             // Calls Character's copy of Movable.move
+        inner.on_special_move(); // Delegates to NEXT SHELL IN STACK
+    }
+}
+
+// Runtime stack for: player <- Enemy <- Character
+// Stack (top to bottom): Character, Enemy
+// Note: Movable, Damageable are NOT in stack - they're compiled into Character
+```
 
 **Conflict Resolution:**
 
@@ -1581,7 +2157,55 @@ shell PlayerCharacter = Movable + Damageable + Controllable;
 
 Equivalent to shell composition with no additional methods.
 
-### 8.8 Unique Shells
+### 8.9 Core-Shell Relationship
+
+Each shell instance attaches to exactly **one** core instance. A shell cannot span multiple cores:
+
+```electron
+// CORRECT: Shell attaches to one core
+entity player = entity.spawn();
+player.add((PlayerData) { hp: 100, position: vec3(0,0,0) });
+player.add((Inventory) { slots: 10 });
+
+PlayerData data = player![PlayerData];
+data <- Controllable;  // Controllable's 'core' is this PlayerData instance
+```
+
+**Cross-Core Communication:**
+
+If behavior needs data from multiple cores, use entity queries:
+
+```electron
+shell PlayerController {
+    requires { vec3 position, int hp }  // Must be on a core with these
+
+    def update(float dt) {
+        // Access other cores via entity reference
+        entity e = core.entity;  // Built-in: every core knows its entity
+        Inventory? inv = e[Inventory];
+        if inv != null {
+            process_inventory(inv);
+        }
+    }
+}
+```
+
+**Same Shell on Multiple Cores:**
+
+The same shell TYPE can attach to different cores on one entity:
+
+```electron
+entity e = entity.spawn();
+e.add((Weapon) { damage: 10, position: vec3(0,0,0) });
+e.add((Shield) { armor: 5, position: vec3(0,0,0) });
+
+Weapon w = e![Weapon];
+Shield s = e![Shield];
+w <- Movable;  // Movable instance 1
+s <- Movable;  // Movable instance 2 (separate state)
+```
+
+### 8.10 Unique Shells
 
 Mark a shell as `unique` to enforce only one instance per core:
 
@@ -1607,7 +2231,7 @@ player <<- PlayerController; // Replaces existing with fresh instance
 | `->` (pop) | Removes the instance | No-op |
 | `->>` (remove all) | Removes the instance | No-op |
 
-### 8.9 Operator Overloading
+### 8.11 Operator Overloading
 
 Shells can define operators for their core type:
 
@@ -1647,6 +2271,190 @@ shell Vec3Ops {
 | `__lte__` | `<=` |
 | `__gte__` | `>=` |
 | `__neg__` | `-` (unary) |
+
+### 8.12 Shell Stack Restrictions
+
+Shells can declare restrictions on what can be stacked with them, enabling controlled shell architectures.
+
+#### 8.12.1 Sealed Shells (Allowlist)
+
+A `sealed` shell defines an allowlist of shells that can be pushed on top of it:
+
+```electron
+sealed shell ActorBase allows [Movement, Combat, Inventory, StatusEffect] {
+    requires { int id, vec3 position }
+
+    def get_id() -> int { return core.id; }
+    def get_position() -> vec3 { return core.position; }
+}
+```
+
+When a shell is pushed onto a core:
+1. Search downward for any `sealed` shells
+2. For each sealed shell found, verify the new shell is in its `allows` list
+3. If any sealed shell rejects the new shell, the push fails with a panic
+
+```electron
+core Player {
+    public int id;
+    public vec3 position;
+    public int hp;
+}
+
+Player p = (Player) { id: 1, position: vec3(0,0,0), hp: 100 };
+
+p <- ActorBase;      // OK: foundation shell
+p <- Movement;       // OK: in allows list
+p <- Combat;         // OK: in allows list
+p <- RandomShell;    // Panic: "Cannot push 'RandomShell': not in ActorBase.allows"
+```
+
+**Multiple Sealed Shells:**
+
+If multiple sealed shells exist in a stack, the new shell must be allowed by ALL of them:
+
+```electron
+sealed shell ActorBase allows [Movement, Combat, AI] { }
+sealed shell PlayerBase allows [Combat, Inventory, Input] { }
+
+// Stack: PlayerBase -> ActorBase -> (core)
+core <- ActorBase;
+core <- PlayerBase;
+core <- Combat;      // OK: allowed by both
+core <- Movement;    // Panic: not in PlayerBase.allows
+core <- Input;       // Panic: not in ActorBase.allows
+```
+
+#### 8.12.2 Inner Requirements (Dependency Declaration)
+
+Shells can declare that they require specific shell types to exist below them using `requires inner`:
+
+```electron
+shell StatModifier {
+    requires inner { CharacterController }  // CharacterController must be below
+
+    float damage_multiplier = 1.0;
+
+    def get_modified_damage(int base) -> int {
+        return (int)(base * damage_multiplier);
+    }
+}
+
+shell Equipment {
+    requires inner { CharacterController, StatModifier }  // Both must be below
+
+    int weapon_damage = 10;
+
+    def get_total_damage() -> int {
+        int base = weapon_damage;
+        // Safe to call - StatModifier is guaranteed to exist
+        return inner[StatModifier]!.get_modified_damage(base);
+    }
+}
+```
+
+When a shell with `requires inner` is pushed:
+1. Verify each required shell type exists somewhere below in the stack
+2. If any required shell is missing, the push fails with a panic
+
+```electron
+// Valid stacking order:
+core <- CharacterController;  // Foundation
+core <- StatModifier;         // OK: CharacterController is below
+core <- Equipment;            // OK: both CharacterController and StatModifier below
+
+// Invalid:
+core <- Equipment;            // Panic: requires CharacterController, StatModifier below
+core <- CharacterController;
+core <- Equipment;            // Panic: requires StatModifier below
+```
+
+#### 8.12.3 Combining Restrictions
+
+`sealed` and `requires inner` work together to create robust shell architectures:
+
+```electron
+// Foundation layer - controls what can stack on top
+sealed shell GameObjectBase allows [Transform, Physics, Renderer, Script] {
+    requires { int id }
+
+    def get_id() -> int { return core.id; }
+}
+
+// Transform requires GameObjectBase below
+shell Transform {
+    requires { vec3 position, vec3 rotation, vec3 scale }
+    requires inner { GameObjectBase }
+
+    def get_world_position() -> vec3 {
+        return core.position;
+    }
+}
+
+// Physics requires both GameObjectBase and Transform
+shell Physics {
+    requires { vec3 velocity }
+    requires inner { GameObjectBase, Transform }
+
+    def update(float dt) {
+        vec3 pos = inner[Transform]!.get_world_position();
+        // ... physics update
+    }
+}
+
+// Renderer has its own allowlist for render features
+sealed shell Renderer allows [Material, Lighting, Shadow, PostProcess] {
+    requires inner { GameObjectBase, Transform }
+
+    def render() {
+        vec3 pos = inner[Transform]!.get_world_position();
+        // ... render at position
+    }
+}
+
+// Material can only be on a Renderer (due to sealed) and requires Renderer below
+shell Material {
+    requires inner { Renderer }
+
+    string shader = "default";
+}
+```
+
+#### 8.12.4 Restriction Inheritance in Composition
+
+When shells are composed, restrictions are merged:
+
+```electron
+sealed shell A allows [X, Y] { }
+sealed shell B allows [Y, Z] { }
+
+// Composed shell inherits INTERSECTION of allows
+shell C: A, B { }
+// C effectively allows [Y] (only Y is in both lists)
+
+// requires inner merges with UNION
+shell D {
+    requires inner { Base1 }
+}
+shell E {
+    requires inner { Base2 }
+}
+shell F: D, E { }
+// F requires inner { Base1, Base2 }
+```
+
+**Compile-Time Assistance:**
+
+The compiler provides best-effort static analysis when shell stacks are known:
+
+| Situation | Compiler Behavior |
+|-----------|-------------------|
+| `inner[T]!` where T statically unreachable | Error |
+| `inner[T]` where T statically unreachable | Warning |
+| `outer[T]!` where T statically unreachable | Error |
+| `outer[T]` where T statically unreachable | Warning |
+| Push violates `sealed` (statically known) | Error |
+| Push violates `requires inner` (statically known) | Error |
 
 ---
 
@@ -1757,6 +2565,28 @@ result[int, string] r1 = success(42);
 result[int, string] r2 = error("failed");
 ```
 
+**Error Type Inference Rules:**
+
+```electron
+// 1. Return type provides context:
+def foo() -> result[int, string] {
+    return success(5);  // Infers result[int, string]
+}
+
+// 2. Variable type provides context:
+result[int, MyError] r = success(5);  // OK
+
+// 3. No context = compile error:
+func f = () {
+    return success(5);  // Error: cannot infer error type
+};
+
+// Fix by specifying return type:
+func f = () -> result[int, string] {
+    return success(5);  // OK
+};
+```
+
 ### 10.2 Error Propagation
 
 Use `?` to propagate errors automatically:
@@ -1844,9 +2674,10 @@ def open_file(string path) -> result[File, FileError] {
 | Array out of bounds | Panic with stack trace |
 | Division by zero (int) | Panic |
 | Division by zero (float) | IEEE 754: `1.0/0.0` → `inf`, `0.0/0.0` → `nan`, `-1.0/0.0` → `-inf` |
-| Shell requirements mismatch | Error at attachment time |
+| Shell requirements mismatch | Panic: "Cannot attach shell 'X' to core 'Y': missing required field 'Z' of type 'T'" |
 | `inner!` with no handler | Panic |
 | `entity![T]` when core missing | Panic |
+| Stale entity reference | Panic with generation mismatch message |
 
 **Panic Semantics:**
 
@@ -1939,6 +2770,11 @@ if c.running() {
     print("Still going");
 }
 
+// Check if cancelled
+if c.cancelled() {
+    print("Was cancelled");
+}
+
 // Cancel
 c.cancel();
 
@@ -1961,6 +2797,32 @@ def compute_path(vec3 start, vec3 end) -> coro[list[vec3]] {
 // Usage
 coro[list[vec3]] path_coro = spawn compute_path(a, b);
 list[vec3] path = yield path_coro;  // Wait and get result
+```
+
+**Coroutine States:**
+
+| State | `running()` | `cancelled()` | `yield coro` behavior |
+|-------|-------------|---------------|----------------------|
+| Running | `true` | `false` | Suspends until completion, returns value |
+| Completed | `false` | `false` | Returns cached result immediately |
+| Cancelled | `false` | `true` | Returns default value for return type |
+
+**Detailed Semantics:**
+
+```electron
+// Yielding on completed coroutine returns cached result
+coro[int] c = spawn compute();
+int r1 = yield c;  // Waits, gets result (e.g., 42)
+int r2 = yield c;  // Returns cached 42 immediately (no wait)
+
+// Yielding on cancelled coroutine
+coro[int] c = spawn compute();
+c.cancel();
+int r = yield c;   // Returns 0 (default for int)
+
+// Result access without yielding
+coro[T].result() -> T?    // Returns null if not completed, value if completed
+coro[T].result_or(T) -> T // Returns default if not completed
 ```
 
 ### 11.8 Engine Scheduler Contract
@@ -2010,6 +2872,28 @@ import "enemies/dragon"
 ```
 
 File extensions are omitted in import paths.
+
+**Import Conflicts:**
+
+Conflicts are compile-time errors requiring explicit resolution:
+
+```electron
+// utils/math.e
+export def clamp(float x, float min, float max) -> float { ... }
+
+// utils/helpers.e
+export def clamp(int x, int min, int max) -> int { ... }
+
+// main.e
+from "utils/math" import clamp      // OK
+from "utils/helpers" import clamp   // Error: 'clamp' already imported
+
+// Resolution options:
+import "utils/math" as math
+import "utils/helpers" as helpers
+math.clamp(1.0, 0.0, 2.0);
+helpers.clamp(1, 0, 2);
+```
 
 ### 12.3 Exporting
 
@@ -2088,7 +2972,7 @@ def on_disabled() {
 
 ### 13.2 Property Change Observers
 
-React to field changes:
+React to field changes. The field name in `@change` refers to fields declared in the shell's `requires` block:
 
 ```electron
 core Player {
@@ -2097,7 +2981,11 @@ core Player {
 }
 
 shell HealthUI {
-    @change(hp)
+    requires { int hp, int max_hp }
+
+    int ui_hp;  // Shell's own field - NOT watchable via @change
+
+    @change(hp)  // Watches core.hp (from requires)
     def on_hp_changed(int old_value, int new_value) {
         update_health_bar(new_value, core.max_hp);
 
@@ -2108,9 +2996,14 @@ shell HealthUI {
 }
 ```
 
+**Rules:**
+- `@change(field)` watches `requires` field, error if ambiguous or missing
+- Shell's own fields are NOT watchable (no self-observation)
+- Nested paths are not supported (use explicit polling instead)
+
 ### 13.3 The `entity` Type
 
-`entity` is an opaque engine handle representing a container for cores.
+`entity` is an opaque engine handle with a **generation counter** for safe reference tracking.
 
 **Entity Lifecycle:**
 
@@ -2121,11 +3014,27 @@ entity e = entity.spawn();
 // Destroy an entity
 entity.destroy(e);
 
-// Check if alive
+// Check if alive (validates generation)
 if entity.alive(e) { }
 
 // Get entity ID
 int id = e.id;
+```
+
+**Generation Counter:**
+
+Each entity ID includes a generation number. When an entity is destroyed, the generation increments. Stale references are detected at runtime:
+
+```electron
+entity e = entity.spawn();      // id: 42, gen: 1
+PlayerData data = e![PlayerData];
+entity.destroy(e);              // gen: 1 → 2
+
+// Accessing stale reference produces clean panic:
+data.hp;  // Panic: "Accessing core from destroyed entity (id: 42, expected gen: 1, current: 2)"
+
+// entity.alive() returns false for stale references
+entity.alive(e);  // false
 ```
 
 **Core Management:**
@@ -2165,6 +3074,26 @@ PlayerData removed = player[PlayerData].detach();
 // Panic if core doesn't exist before detaching
 PlayerData removed2 = player[PlayerData]!.detach();
 ```
+
+**Best Practices:**
+
+1. Don't store core references long-term; re-query from entity:
+   ```electron
+   def update(entity player) {
+       if entity.alive(player) {
+           PlayerData data = player![PlayerData];
+           // Use data within this frame only
+       }
+   }
+   ```
+
+2. Use entity handles, not core references, for long-term storage:
+   ```electron
+   list[entity] enemies;  // Store entity handles
+   // NOT: list[EnemyData] enemies;
+   ```
+
+3. Check `entity.alive()` before accessing stored entities
 
 **Shell Attachment:**
 
@@ -2211,6 +3140,19 @@ Electron is designed for hot reloading:
    - If structure unchanged (same yield points): continue at current position
    - If structure changed: restart from beginning with warning logged
 4. **Registered callbacks are re-bound by name**
+
+**Coroutine Hot Reload Control:**
+
+```electron
+@hot_reload_restart          // Restart from beginning (default)
+def long_animation() -> coro { }
+
+@hot_reload_preserve         // Attempt to preserve state (may fail)
+def critical_sequence() -> coro { }
+
+@hot_reload_cancel           // Cancel and don't restart
+def optional_effect() -> coro { }
+```
 
 **Migration Logic:**
 
@@ -2395,6 +3337,7 @@ string sub = s.substring(0, 5);  // "Hello"
 int idx = s.index_of("World");   // 7
 string replaced = s.replace("World", "Electron");
 string str_val = value.to_string();  // Convert any value to string
+string interned = string.intern(s);  // Explicitly intern a runtime string
 ```
 
 **Range:**
@@ -2410,6 +3353,50 @@ list[int] items = r.to_list();
 
 ---
 
+## 15. Memory Model
+
+### 15.1 Garbage Collection
+
+Electron uses tracing garbage collection for reference types (cores, strings, collections). The GC runs incrementally during frame boundaries.
+
+### 15.2 Value Types
+
+Primitives, vectors, matrices, ranges, tuples, and structs are stack-allocated when local and copied on assignment. No GC involvement.
+
+### 15.3 Reference Types
+
+Cores, strings, lists, dicts, and functions are heap-allocated and managed by GC. References are counted for cycle detection.
+
+### 15.4 Engine Interop
+
+Memory shared with the engine (entities, components) follows engine ownership rules. Electron references to engine objects are weak references validated via generation counters.
+
+---
+
+## 16. Concurrency Model
+
+### 16.1 Single-Threaded Execution
+
+Electron scripts execute on a single thread (the main/game thread). There are no threads, locks, or atomics in the language.
+
+### 16.2 Engine Parallelism
+
+The engine may parallelize systems that don't share state. From Electron's perspective, each script invocation is single-threaded.
+
+### 16.3 Async Operations
+
+Use coroutines for async-style programming. Coroutines are cooperative (not preemptive) and run on the main thread.
+
+### 16.4 Future Consideration
+
+Job system integration is planned for v2.0:
+```electron
+@parallel
+def process_batch(list[Entity] batch) { }
+```
+
+---
+
 ## Appendix A: Grammar Summary
 
 ```
@@ -2420,15 +3407,20 @@ declaration     → constDecl | coreDecl | structDecl | shellDecl | enumDecl
 constDecl       → decorator* "const" IDENTIFIER "=" expression ";"
 coreDecl        → "core" IDENTIFIER "{" fieldDecl* "}"
 structDecl      → "struct" IDENTIFIER "{" fieldDecl* "}"
-shellDecl       → "strict"? "unique"? "shell" IDENTIFIER (":" IDENTIFIER ("," IDENTIFIER)*)?
-                  "{" requiresDecl? (fieldDecl | funcDecl)* "}"
+shellDecl       → shellModifiers "shell" IDENTIFIER compositionClause? allowsClause?
+                  "{" shellRequires? (fieldDecl | funcDecl)* "}"
+shellModifiers  → "strict"? "unique"? "sealed"?
+compositionClause → ":" IDENTIFIER ("," IDENTIFIER)*
+allowsClause    → "allows" "[" IDENTIFIER ("," IDENTIFIER)* "]"
+shellRequires   → fieldRequires? innerRequires?
+fieldRequires   → "requires" "{" typeField ("," typeField)* "}"
+innerRequires   → "requires" "inner" "{" IDENTIFIER ("," IDENTIFIER)* "}"
 enumDecl        → "enum" IDENTIFIER "{" enumVariant ("," enumVariant)* "}"
 funcDecl        → decorator* "def" IDENTIFIER "(" paramList? ")" ("->" type)? block
 importDecl      → "import" STRING ("as" IDENTIFIER)?
                 | "from" STRING "import" IDENTIFIER ("," IDENTIFIER)*
 typeAlias       → "type" IDENTIFIER "=" type ";"
 
-requiresDecl    → "requires" "{" typeField ("," typeField)* "}"
 fieldDecl       → "public"? "readonly"? type IDENTIFIER ("=" expression)? ";"
 paramList       → param ("," param)*
 param           → "mut"? "*"? type IDENTIFIER ("=" expression)?
@@ -2448,8 +3440,32 @@ statement       → exprStmt | varDecl | assignment | ifStmt | whileStmt
                 | doWhileStmt | loopStmt | forStmt | matchStmt
                 | returnStmt | yieldStmt | breakStmt | continueStmt
                 | deferStmt | labeledStmt | block
-block           → "{" statement* "}"
 
+varDecl         → type IDENTIFIER ("=" expression)? ";"
+assignment      → assignTarget assignOp expression ";"
+assignTarget    → IDENTIFIER | postfix
+assignOp        → "=" | "+=" | "-=" | "*=" | "/=" | "%="
+                | "&=" | "|=" | "^=" | "<<=" | ">>="
+
+returnStmt      → "return" expression? ";"
+yieldStmt       → "yield" yieldExpr? ";"
+yieldExpr       → expression | "wait" "(" expression ")"
+                | "until" "(" expression ")" | "while_true" "(" expression ")"
+
+matchStmt       → "match" expression "{" matchArm ("," matchArm)* "}"
+matchArm        → pattern ("if" expression)? "=>" (expression | block)
+pattern         → literalPattern | rangePattern | destructurePattern
+                | bindingPattern | wildcardPattern
+literalPattern  → NUMBER | STRING | "true" | "false" | "null"
+rangePattern    → expression (".." | "..=") expression
+destructurePattern → IDENTIFIER "(" pattern ("," pattern)* ")"
+                   | "[" listPatternElements? "]"
+                   | "(" pattern ("," pattern)+ ")"
+listPatternElements → pattern ("," pattern)* ("," "..." IDENTIFIER)?
+bindingPattern  → IDENTIFIER
+wildcardPattern → "_"
+
+block           → "{" statement* "}"
 labeledStmt     → IDENTIFIER ":" (whileStmt | forStmt | loopStmt)
 deferStmt       → "defer" statement
 breakStmt       → "break" IDENTIFIER? ";"
@@ -2468,24 +3484,30 @@ bitAnd          → shift ("&" shift)*
 shift           → term (("<<" | ">>") term)*
 term            → factor (("+" | "-") factor)*
 factor          → unary (("*" | "/" | "%") unary)*
-unary           → ("!" | "-" | "~") unary | postfix
-postfix         → primary (call | typeParamCall | index | member | innerCall)*
+unary           → ("!" | "-" | "~") unary | errorProp
+errorProp       → postfix "?"?
+postfix         → primary (call | typeParamCall | index | member)*
 call            → "(" argList? ")"
 typeParamCall   → "[" type "]" "(" argList? ")"
 index           → "[" expression "]"
 member          → ("." | "?.") IDENTIFIER
-innerCall       → "inner" ("!" | "?")? "." IDENTIFIER "(" argList? ")"
 
 primary         → NUMBER | STRING | "true" | "false" | "null"
                 | IDENTIFIER | "(" expression ")" | listLiteral | dictLiteral
-                | coreLiteral | vectorLiteral | tupleLiteral | rangeLiteral | closure
-                | qualifiedCall
+                | coreLiteral | vectorLiteral | tupleLiteral | rangeLiteral
+                | closure | innerExpr | outerExpr | qualifiedCall
+
+innerExpr       → "inner" typeArgument? failMode? "." IDENTIFIER "(" argList? ")"
+outerExpr       → "outer" typeArgument? failMode? "." IDENTIFIER "(" argList? ")"
+typeArgument    → "[" IDENTIFIER "]"
+failMode        → "!" | "?"
 
 listLiteral     → "[" (expression ("," expression)*)? "]"
 dictLiteral     → "{" (dictEntry ("," dictEntry)*)? "}"
 dictEntry       → expression ":" expression
 
-coreLiteral     → IDENTIFIER "{" (fieldInit ("," fieldInit)*)? "}"
+coreLiteral     → "(" IDENTIFIER ")" "{" (fieldInit ("," fieldInit)*)? "}"
+                | "{" (fieldInit ("," fieldInit)*)? "}"
 fieldInit       → IDENTIFIER ":" expression | expression
 
 vectorLiteral   → ("vec2" | "vec3" | "vec4") "(" expression ("," expression)* ")"
@@ -2507,6 +3529,7 @@ decorator       → "@" decoratorName ("(" argList? ")")?
 decoratorName   → "comptime" | "debug" | "on_update" | "on_fixed_update"
                 | "on_collision" | "on_trigger" | "on_destroy"
                 | "on_enable" | "on_disable" | "on_hot_reload" | "change"
+                | "hot_reload_restart" | "hot_reload_preserve" | "hot_reload_cancel"
 
 typeField       → type IDENTIFIER
 typeList        → type ("," type)*
@@ -2536,31 +3559,32 @@ namedArgs       → IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*
 | 13 | `*` `/` `%` | Left |
 | 14 | `..` `..=` | Left |
 | 15 | `!` `-` `~` (unary) | Right |
-| 16 | `.` `?.` `()` `[]` | Left |
-| 17 (highest) | Primary | - |
+| 16 | `?` (error propagation) | Postfix |
+| 17 | `.` `?.` `()` `[]` | Left |
+| 18 (highest) | Primary | - |
 
 ---
 
-## Appendix C: Type Sizes
+## Appendix C: Type Sizes and Alignment
 
-| Type | Size (bytes) |
-|------|--------------|
-| `int` | 4 |
-| `float` | 4 |
-| `bool` | 1 |
-| `vec2` | 8 |
-| `vec3` | 12 |
-| `vec4` | 16 |
-| `mat2` | 16 |
-| `mat3` | 36 |
-| `mat4` | 64 |
-| `range` | 9 |
-| `string` | pointer (8 on 64-bit) |
-| `list[T]` | pointer |
-| `dict[K->V]` | pointer |
-| Core | pointer |
-| Struct | sum of fields (max 64) |
-| Tuple | sum of elements |
+| Type | Size (bytes) | Alignment |
+|------|--------------|-----------|
+| `int` | 4 | 4 |
+| `float` | 4 | 4 |
+| `bool` | 1 | 1 |
+| `vec2` | 8 | 4 |
+| `vec3` | 12 | 4 |
+| `vec4` | 16 | 4 |
+| `mat2` | 16 | 4 |
+| `mat3` | 36 | 4 |
+| `mat4` | 64 | 4 |
+| `range` | 12 | 4 |
+| `string` | pointer (8 on 64-bit) | 8 |
+| `list[T]` | pointer | 8 |
+| `dict[K->V]` | pointer | 8 |
+| Core | pointer | 8 |
+| Struct | sum of fields (max 64) | max field alignment |
+| Tuple | sum of elements | max element alignment |
 
 ---
 
@@ -2594,14 +3618,14 @@ Shell method dispatch uses per-call-site caching for O(1) performance:
 ```
 // Conceptual implementation
 struct CallSiteCache {
-    uint32_t shell_version;  // Incremented on any shell change
+    uint64_t shell_version;  // 64-bit to avoid wraparound
     void* handler;           // Cached function pointer
     void* inner_handler;     // For inner delegation
 };
 
 // Each core tracks its shell version
 struct Core {
-    uint32_t shell_version;
+    uint64_t shell_version;
     // ...
 };
 
@@ -2623,3 +3647,39 @@ void take_damage_cached(Core* core, int amount, CallSiteCache* cache) {
     }
 }
 ```
+
+---
+
+## Appendix F: Performance Characteristics
+
+| Operation | Complexity | Notes |
+|-----------|------------|-------|
+| `entity[Core]` lookup | O(n) where n = cores on entity | Typically <10 |
+| `scene.query[T1, T2]()` | O(entities) | Consider caching results |
+| Shell method dispatch | O(1) amortized | Cached per call-site |
+| Shell push/pop | O(n × m) | n = shells, m = restrictions |
+| `inner.method()` | O(1) amortized | Cached per call-site |
+| `inner[T].method()` | O(1) amortized | Cached per call-site |
+| `outer[T].method()` | O(1) amortized | Cached per call-site |
+| Cycle detection | O(d) | d = call depth |
+
+**Typed Call Caching Strategy:**
+
+Typed lookups (`inner[T]`, `outer[T]`) maintain per-call-site caches:
+
+```
+struct TypedCallCache {
+    stack_version: uint64,     // For cache invalidation
+    target_shell_index: int,   // -1 if not found
+    method_ptr: FunctionPtr,
+}
+```
+
+Cache is invalidated when `stack.version` changes (any push/pop operation).
+
+**Optimization Strategies:**
+1. Cache entity queries per frame
+2. Prefer fewer, larger cores over many small ones
+3. Minimize shell stack changes during hot paths
+4. Use typed calls (`inner[T]!`) when the target shell is known to skip search
+5. Consider `requires inner` to guarantee shell presence and avoid runtime checks
