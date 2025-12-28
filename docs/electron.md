@@ -1,6 +1,5 @@
 # Electron Language Specification
 
-**Version:** 2.2
 **Status:** Draft
 **File Extension:** `.e`
 
@@ -62,18 +61,20 @@ Identifiers must begin with a letter or underscore, followed by letters, digits,
 
 **Reserved Keywords:**
 ```
-allows      bool        break       const       continue
-core        coro        def         defer       dict
-do          else        enum        error       export
-false       float       for         from        func
-if          import      in          inner       int
-list        loop        match       mat2        mat3
-mat4        mut         null        outer       public
-range       readonly    requires    result      return
-sealed      shell       strict      string      struct
-success     then        true        tuple       type
-unique      vec2        vec3        vec4        while
-yield       yield_request
+allows      as          bool        break       const
+continue    core        coro        def         defer
+dict        do          else        enum        error
+export      false       float       for         from
+func        if          import      in          inner
+int         is          list        local       loop
+match       mat2        mat3        mat4        mut
+never       not         null        on_cancel   outer
+public      range       readonly    requires    result
+return      sealed      shell       sibling     sibling_all
+spawn       strict      string      struct      success
+then        true        tuple       type        unique
+vec2        vec3        vec4        while       yield
+yield_request
 ```
 
 **Reserved for Future Use:**
@@ -81,7 +82,7 @@ yield       yield_request
 async       await       class       extends     implements
 new         private     protected   static      super
 this        throw       try         catch       finally
-with        as          is          sizeof
+with        sizeof
 ```
 
 ### 1.4 Numeric Literals
@@ -174,7 +175,7 @@ Electron is statically typed. All types must be explicitly declared.
 
 **Integer Overflow:** Integer arithmetic wraps on overflow (two's complement).
 
-**Note:** Only 32-bit signed integers are supported in v1.0. Extended integer types (`int64`, `uint32`, etc.) are planned for v2.0.
+**Note:** Only 32-bit signed integers are currently supported. Extended integer types (`int64`, `uint32`, etc.) are planned for a future release.
 
 ### 2.2 Vector and Matrix Types
 
@@ -352,6 +353,17 @@ int y = (5 + 3) * 2;   // Grouping for precedence
 tuple[int, int] pair = (1, 2);  // Tuple (2+ elements required)
 ```
 
+**Single-Element Tuple:**
+
+Single-element tuples are not allowed, both in types and literals:
+
+```electron
+tuple[int] single;         // Compile error: tuple requires 2+ element types
+tuple single = (5,);       // Compile error: no single-element tuple syntax
+```
+
+Use the element type directly instead of a single-element tuple.
+
 Tuples are value types: copied on assignment, cannot be nullable.
 
 ### 2.5 String Type
@@ -376,6 +388,29 @@ string from_code = string.from_code(104);  // "h"
 for string ch in s.chars() { }
 for int code in s.codes() { }
 ```
+
+**String Interning:**
+
+String literals and compile-time constant concatenations are interned (share storage). Runtime-created strings are not automatically interned.
+
+```electron
+string a = "hello";                    // Interned
+string b = "hel" + "lo";               // Interned (compile-time concat)
+string c = "hel";
+string d = c + "lo";                   // NOT interned (runtime concat)
+
+// Comparison uses value equality regardless of interning
+a == d;  // true (same content)
+
+// Explicit interning for runtime strings:
+string e = string.intern(d);           // Now interned, same reference as a/b
+
+// Identity comparison (rarely needed):
+bool same_ref = string.same_ref(a, b); // true (both interned)
+bool same_ref2 = string.same_ref(a, d); // false (d not interned)
+```
+
+String comparison (`==`) always uses value equality regardless of interning; interning is a memory optimization only.
 
 ### 2.6 Collection Types
 
@@ -473,6 +508,27 @@ def foo(float x) -> float { return x; }  // Error: 'foo' already defined
 def foo_int(int x) -> int { return x; }
 def foo_float(float x) -> float { return x; }
 ```
+
+**Local Function Type Qualifier:**
+
+Functions that capture variables by reference (see Section 6.3) have the `local` type qualifier, which prevents them from escaping their defining scope:
+
+```electron
+int x = 10;
+func[() -> void] local f = () [*x] { print(x); };  // 'local' inferred from [*x]
+
+// Covariance: local functions CAN be passed where non-local is expected
+def takes_callback(func[() -> void] cb) { cb(); }
+takes_callback(f);  // OK: local can be passed to non-local parameter
+
+// But assignment to non-local variable is an error
+func[() -> void] g = f;  // Error: cannot assign local function to non-local variable
+
+// local propagates through inference
+func h = f;  // h is inferred as func[() -> void] local
+```
+
+Local functions cannot be returned, stored in fields, or stored in collections.
 
 ### 2.8 Nullable Types
 
@@ -597,7 +653,7 @@ enum Value { Int(int), Float(float), String(string) }
 core Container { public Value value; }
 ```
 
-User-defined generics are planned for v2.0.
+User-defined generics are planned for a future release.
 
 ### 2.11 Type Coercion
 
@@ -639,6 +695,26 @@ list[int] x = [1, 2, 3];
 list[int] y = x;     // Reference
 y.push(4);           // x is now [1, 2, 3, 4]
 ```
+
+### 2.13 The `never` Type
+
+The `never` type (also called "bottom type") represents computations that never produce a value—they either diverge (loop forever) or abort (panic).
+
+```electron
+// unreachable() returns never
+def process(State s) -> int {
+    return match s {
+        State.A => 1,
+        State.B => 2,
+        State.Removed => unreachable("State.Removed should never occur")
+    };
+}
+
+// never coerces to any type, so it works in any context
+int x = if condition then 42 else unreachable();
+```
+
+The `never` type is the return type of `unreachable()` and functions that always panic. It is a subtype of all types, allowing it to satisfy any type context.
 
 ---
 
@@ -717,7 +793,35 @@ def factorial(int n) -> int {
 @comptime const FACT_10 = factorial(10);  // Computed at compile time
 ```
 
-Limitations: No loops (use recursion), no mutable state, maximum recursion depth: 1000.
+**@comptime Function Restrictions:**
+
+| Allowed | Not Allowed |
+|---------|-------------|
+| Call other @comptime functions | Call non-@comptime functions |
+| Reference @comptime const values | Reference mutable globals |
+| Arithmetic, conditionals, recursion | Loops (use recursion instead) |
+| Return primitives, string literals | Allocate (list/dict construction) |
+
+Maximum recursion depth: 1000. This limit is tracked globally across the entire @comptime evaluation—if function A calls function B which calls function C, all three contribute to the same depth counter. This prevents deeply nested cross-module @comptime evaluations from consuming unbounded compile-time resources.
+
+**Error Messages:**
+
+```electron
+@comptime const TOO_DEEP = factorial(1001);
+// Error: "@comptime evaluation exceeded maximum recursion depth (1000)"
+
+@comptime
+def bad() -> int {
+    return runtime_func();
+}
+// Error: "@comptime function cannot call non-@comptime function 'runtime_func'"
+
+@comptime
+def also_bad() -> int {
+    return global_var;
+}
+// Error: "@comptime function cannot reference non-const global 'global_var'"
+```
 
 **Conditional Compilation:**
 
@@ -954,6 +1058,23 @@ for int i in 0..10 {
 for int i in 0..=10 {
     print(i);  // 0, 1, 2, ..., 10
 }
+
+// Tuple destructuring in loops
+list[tuple[string, int]] pairs = [("a", 1), ("b", 2), ("c", 3)];
+for tuple[string, int] (name, value) in pairs {
+    print("{name}: {value}");
+}
+
+// With index
+for int i, tuple[string, int] (name, value) in pairs {
+    print("{i}: {name} = {value}");
+}
+
+// Complex tuple types
+list[tuple[string, float, func[(int) -> void]]] callbacks = [];
+for tuple[string, float, func[(int) -> void]] (name, delay, action) in callbacks {
+    schedule(delay, action);
+}
 ```
 
 **Loop Control:**
@@ -1018,6 +1139,35 @@ def process_file(string path) -> result[Data, Error] {
 - Defers run on normal exit, early return, and error propagation (`?`)
 - Defers do **not** run on panic
 
+**Defer and Coroutines:**
+
+In coroutines, `defer` runs on completion or cancellation, but **not** on yield:
+
+```electron
+def my_coroutine() -> coro {
+    Resource r = acquire();
+    defer release(r);       // Runs when coroutine completes OR is cancelled
+
+    yield wait(1.0);        // defer does NOT run here (yield is suspend, not exit)
+    yield wait(1.0);        // defer does NOT run here either
+
+    // defer runs here on normal completion
+}
+
+// If cancelled:
+coro c = spawn my_coroutine();
+c.cancel();  // defer runs here (cancellation is an exit)
+```
+
+| Event | `defer` runs? | Rationale |
+|-------|---------------|-----------|
+| `yield` | No | Suspend, not exit—coroutine may resume |
+| Normal completion | Yes | Function exits |
+| Cancellation | Yes | Function exits (abnormally) |
+| Panic | No | Consistent with non-coroutine behavior |
+
+This matches Go's behavior (defer runs on function return, not goroutine suspend) and Rust's Drop semantics (runs when value goes out of scope, not on async yield).
+
 **Restrictions:**
 
 `defer` blocks cannot contain control flow statements:
@@ -1073,11 +1223,16 @@ match score {
     _ => "Invalid"
 }
 
-// Guard patterns (short-circuit evaluation applies)
+// Guard patterns
 match x {
     n if n < 0 => "negative",
     n if n > 100 => "large",
     n => "normal: {n}"
+}
+
+// Guards with multiple conditions (short-circuit evaluation applies)
+match value {
+    Some(x) if x > 0 && expensive() => ...,  // expensive() only called if x > 0
 }
 
 // Destructuring patterns
@@ -1175,6 +1330,58 @@ match state {
     State.Attacking(dmg) => ...,  // dmg captures ANY int
 }
 ```
+
+**Guard Semantics:**
+
+Pattern bindings are visible within the guard expression. Guards use standard short-circuit evaluation (`&&` and `||`):
+
+```electron
+match value {
+    Some(x) if x > 0 => ...,           // x is bound, visible in guard
+    (a, b) if a == b => ...,           // Multiple bindings visible
+    n if n > 0 && expensive() => ...,  // Short-circuit: expensive() only if n > 0
+}
+
+// Evaluation order:
+// 1. Pattern match attempted
+// 2. If pattern matches, bindings are created
+// 3. Guard evaluated left-to-right with short-circuit
+// 4. If guard is true, arm executes
+// 5. If guard is false, bindings are discarded, next arm tried
+```
+
+**The `is` Pattern Expression:**
+
+For single-pattern checks, use `is` instead of a full `match`:
+
+```electron
+result[int, string] res = compute();
+
+// Pattern: expr 'is' pattern
+if res is success(value) {
+    use(value);  // value is bound in this scope only
+}
+
+if res is error(msg) {
+    print(msg);
+}
+
+// Works with any pattern
+if point is vec3(0, 0, z) {
+    print("On z-axis at {z}");
+}
+
+if state is State.Attacking(dmg) {
+    print("Attacking with {dmg} damage");
+}
+
+// Negation
+if res is not error(_) {
+    // Success case
+}
+```
+
+The `is` expression binds pattern variables only within the `if` block scope.
 
 ---
 
@@ -1278,6 +1485,52 @@ func greeter = (string name) {
 list[int] doubled = numbers.map((int x) -> int { return x * 2; });
 ```
 
+**Return Type Inference:**
+
+Closure return types are inferred from `return` statements when omitted:
+
+```electron
+// Explicit return type
+func f1 = (int x) -> int { return x * 2; };
+
+// Inferred return type (all returns must have same type)
+func f2 = (int x) { return x * 2; };          // Inferred: -> int
+func f3 = (int x) { return x.to_string(); };  // Inferred: -> string
+
+// No returns = void
+func f4 = (int x) { print(x); };              // Inferred: -> void
+
+// Multiple returns must agree
+func f5 = (int x) {
+    if x > 0 { return "positive"; }
+    return "non-positive";                     // OK: both return string
+};
+
+func f6 = (int x) {
+    if x > 0 { return x; }
+    return "negative";                         // Error: int vs string
+};
+
+// Nullable inference only for reference types
+func f7 = (Player? p) {
+    if p == null { return null; }
+    return p.name;                             // Inferred: -> string? (nullable)
+};
+
+// Result type inference requires explicit annotation
+func f8 = (int x) -> result[int, string] {
+    if x < 0 { return error("negative"); }
+    return success(x * 2);                     // OK: explicit return type
+};
+
+func f9 = (int x) {
+    if x < 0 { return error("negative"); }
+    return success(x * 2);                     // Error: cannot infer result type
+};
+// The error type cannot be inferred from success(), and vice versa.
+// Always provide explicit return types for closures returning result.
+```
+
 **Capturing Variables:**
 
 By default, closures capture variables by value (snapshot at creation time):
@@ -1312,11 +1565,15 @@ func f = () [*a, *b] {
 };
 ```
 
-**Reference Capture Restrictions:**
+**Reference Capture Restrictions (Local Functions):**
 
-Closures with reference captures cannot escape their defining scope:
+Closures with reference captures have the `local` type qualifier (see Section 2.7), which prevents them from escaping their defining scope:
 
 ```electron
+// 'local' is automatically inferred for [*var] captures
+int x = 10;
+func[() -> void] local f = () [*x] { print(x); };  // 'local' inferred
+
 // OK: closure used within same scope
 def process(list[int] items) {
     int sum = 0;
@@ -1326,23 +1583,41 @@ def process(list[int] items) {
     print(sum);
 }
 
-// OK: stored in variable but used in same scope
+// OK: stored in local variable and used in same scope
 def example() {
     int x = 10;
-    func f = () [*x] { print(x); };
+    func f = () [*x] { print(x); };  // f has type func[() -> void] local
     f();      // OK
     f();      // OK
-    // f cannot be returned or stored in a field
 }
 
 // Error: reference capture cannot escape
 def make_counter() -> func[() -> int] {
     int count = 0;
-    return () [*count] -> int {  // Error!
+    return () [*count] -> int {  // Error: cannot return local function
         count += 1;
         return count;
     };
 }
+```
+
+**Local Function Enforcement Rules:**
+
+| Allowed | Not Allowed |
+|---------|-------------|
+| Pass to function parameters | Return from functions |
+| Store in local variables | Store in core/struct fields |
+| Call immediately | Store in collections |
+
+```electron
+func[() -> void] local f = () [*x] { };
+
+// Covariance: local can be passed to non-local parameters
+def takes_callback(func[() -> void] cb) { cb(); }
+takes_callback(f);  // OK
+
+// But assignment to non-local is an error
+func[() -> void] g = f;  // Error: cannot assign local to non-local
 ```
 
 To create escaping closures with mutable state, use a core:
@@ -1363,7 +1638,7 @@ def make_counter() -> func[() -> int] {
 
 **yield in Closures:**
 
-`yield` is only valid inside functions returning `coro` or `coro[T]`:
+`yield` is only valid inside functions returning `coro` or `coro[T]`. Closures, even those defined inside coroutines, cannot contain `yield`:
 
 ```electron
 def not_a_coro() {
@@ -1379,6 +1654,32 @@ def outer_coro() -> coro {
         yield;          // Error: closure is not a coroutine
     };
     yield;              // OK: in coroutine
+}
+```
+
+**Workaround for Async Iteration:**
+
+Use explicit `for` loops or delegate to sub-coroutines:
+
+```electron
+def my_coro() -> coro {
+    list[int] items = [1, 2, 3];
+
+    // Option 1: Explicit loop (recommended)
+    for int x in items {
+        yield wait(1.0);
+        process(x);
+    }
+
+    // Option 2: Delegate to sub-coroutine
+    yield process_with_delay(items, 1.0);
+}
+
+def process_with_delay(list[int] items, float delay) -> coro {
+    for int x in items {
+        process(x);
+        yield wait(delay);
+    }
 }
 ```
 
@@ -1469,6 +1770,31 @@ do_something({ health: 50 });  // Error: ambiguous, use (Player) { health: 50 }
 do_something((Player) { health: 50 });  // OK: explicit
 ```
 
+**Anonymous Literal Type Inference:**
+
+Type is inferred from context: variable declaration, function parameter, collection element type, or return type.
+
+```electron
+// Variable declaration
+Player p = { health: 100 };                    // OK: inferred from Player
+
+// Function parameter
+def spawn(Player p) { }
+spawn({ health: 100 });                        // OK: inferred from parameter type
+
+// Collection element
+list[Player] team = [{ health: 100 }, { health: 80 }];  // OK: inferred from list[Player]
+
+// Return type
+def make_player() -> Player {
+    return { health: 100 };                    // OK: inferred from return type
+}
+
+// Ambiguous contexts require explicit cast
+list items = [{ health: 100 }];               // Error: element type unknown
+dict[string -> ???] d = {"p": { health: 100 }}; // Error: value type unknown
+```
+
 **Field Initialization Order:**
 
 Fields initialize in declaration order. Later fields can reference earlier ones:
@@ -1484,6 +1810,21 @@ core Foo {
 
 // Explicit construction overrides defaults:
 Foo f = (Foo) { a: 10, b: 20 };  // a=10, b=20 (not a+1), c=40, e=10
+```
+
+**Initialization Semantics:**
+
+When constructing a core, fields are processed in declaration order:
+1. If a field has an explicit value in the literal, that value is used
+2. If a field has a default expression, it is evaluated using the *current* values of earlier fields (which may be explicitly provided or defaulted)
+3. Default expressions are re-evaluated at construction time, not cached
+
+```electron
+// Given the Foo definition above:
+Foo f1 = (Foo) { };               // a=5, b=6, c=12, e=10 (all defaults)
+Foo f2 = (Foo) { a: 10 };         // a=10, b=11, c=22, e=10 (b uses new a)
+Foo f3 = (Foo) { a: 10, b: 20 };  // a=10, b=20, c=40, e=10 (c uses new b)
+Foo f4 = (Foo) { c: 100 };        // a=5, b=6, c=100, e=10 (c explicitly set)
 ```
 
 ### 7.4 Nested Cores
@@ -1513,6 +1854,32 @@ GameObject obj = (GameObject) {
     name: "Player"
 };
 ```
+
+**Self-Referential Cores:**
+
+Cores can reference their own type, enabling recursive data structures like trees and graphs:
+
+```electron
+core TreeNode {
+    public int value;
+    public TreeNode? left;   // Nullable self-reference
+    public TreeNode? right;
+}
+
+core LinkedListNode {
+    public int data;
+    public LinkedListNode? next;
+}
+
+// Usage
+TreeNode root = (TreeNode) {
+    value: 10,
+    left: (TreeNode) { value: 5, left: null, right: null },
+    right: (TreeNode) { value: 15, left: null, right: null }
+};
+```
+
+Self-references must be nullable (cores are reference types, so this works without special indirection). Circular references are allowed and handled by the garbage collector.
 
 ### 7.5 Core Methods
 
@@ -1549,7 +1916,6 @@ struct AABB {
 
 | Constraint | Rationale |
 |------------|-----------|
-| Maximum 64 bytes total size | Efficient stack allocation and copying |
 | No shell attachment | Shells require reference semantics |
 | Cannot be nullable | Nullable implies reference; value types always exist |
 | Copied on assignment | Value semantics, like `int` or `vec3` |
@@ -1558,21 +1924,31 @@ struct AABB {
 | No recursive/self-referential | Would require indirection |
 | No `readonly` keyword | Value types are always copied; readonly is meaningless |
 
-**Size Calculation:**
+**Size Considerations:**
+
+Structs have no hard size limit (unlike some earlier language proposals). However, the compiler issues a warning for large structs since they are copied on every assignment and function call:
 
 ```electron
-struct Example {
-    int a;      // 4 bytes
-    int b;      // 4 bytes
-    float c;    // 4 bytes
-    vec3 d;     // 12 bytes
-}               // Total: 24 bytes (OK)
+struct Transform {
+    mat4 matrix;    // 64 bytes
+    bool dirty;     // 1 byte + padding
+}                   // ~68 bytes - OK, but warning issued
 
-struct TooBig {
-    mat4 a;     // 64 bytes
-    int b;      // 4 bytes
-}               // Error: 68 bytes exceeds 64 byte limit
+struct Example {
+    int a;          // 4 bytes
+    int b;          // 4 bytes
+    float c;        // 4 bytes
+    vec3 d;         // 12 bytes
+}                   // Total: 24 bytes (no warning)
 ```
+
+| Struct Size | Behavior |
+|-------------|----------|
+| ≤ 64 bytes | No warning |
+| 65-256 bytes | Warning: "Large struct 'T' (N bytes) will be copied on assignment. Consider using a core for reference semantics." |
+| > 256 bytes | Warning: "Very large struct 'T' (N bytes). Strongly consider using a core." |
+
+Developers can suppress warnings with `@allow(large_struct)` if copying is intentional. Use cores for large data that should be passed by reference.
 
 **Struct Field Visibility:**
 
@@ -1636,6 +2012,48 @@ c.r = 0.5;              // Does NOT modify palette[0]
 
 // Modify in place with index assignment
 palette[0].r = 0.5;     // Modifies palette[0] directly
+```
+
+**Associated Functions Convention:**
+
+Since structs cannot have methods, use module-level functions with a `Type_` prefix:
+
+```electron
+// In structs/color.e
+
+export struct Color {
+    public float r;
+    public float g;
+    public float b;
+    public float a;
+}
+
+// Associated functions use Type_ prefix
+export def Color_from_rgb(float r, float g, float b) -> Color {
+    return (Color) { r: r, g: g, b: b, a: 1.0 };
+}
+
+export def Color_from_hex(int hex) -> Color {
+    return (Color) {
+        r: ((hex >> 16) & 0xFF) / 255.0,
+        g: ((hex >> 8) & 0xFF) / 255.0,
+        b: (hex & 0xFF) / 255.0,
+        a: 1.0
+    };
+}
+
+export def Color_lerp(Color a, Color b, float t) -> Color {
+    return (Color) {
+        r: lerp(a.r, b.r, t),
+        g: lerp(a.g, b.g, t),
+        b: lerp(a.b, b.b, t),
+        a: lerp(a.a, b.a, t)
+    };
+}
+
+// Usage:
+Color red = Color_from_hex(0xFF0000);
+Color orange = Color_lerp(red, yellow, 0.5);
 ```
 
 ---
@@ -1749,6 +2167,56 @@ shell Debugger {
 }
 ```
 
+**Entity Requirements and Sibling Access:**
+
+Shells can declare that other core types must exist on the same entity using `requires entity`:
+
+```electron
+shell PlayerController {
+    requires { vec3 position, int hp }           // Fields on THIS core
+    requires entity { Inventory, Equipment }     // Other cores on same entity
+
+    def update(float dt) {
+        // core.* accesses attached core
+        core.position += get_input() * dt;
+
+        // sibling[T] is shorthand for core.entity![T] when T is in requires entity
+        Inventory inv = sibling[Inventory];     // Never null (guaranteed by requires)
+        Equipment eq = sibling[Equipment];      // Never null
+
+        // sibling[T]? is shorthand for core.entity[T] for optional lookups
+        AIController? ai = sibling[AIController]?;  // Nullable (not in requires)
+
+        // Method calls on sibling go through that core's shell stack
+        inv.add_item(loot);  // Calls through Inventory's shell stack
+    }
+}
+```
+
+| Syntax | Equivalent | Behavior |
+|--------|------------|----------|
+| `sibling[T]` | `core.entity![T]` | Returns core, panics if missing. Only valid when `T` in `requires entity` |
+| `sibling[T]?` | `core.entity[T]` | Returns nullable core. Valid for any core type |
+| `sibling_all[T]` | (no shorthand) | Returns `list[T]` of all cores of type T on entity. Returns empty list `[]` if none exist |
+
+**Dressed Core Semantics:**
+
+The `sibling` keyword returns a "dressed" core—the core instance with its attached shell stack intact. Method calls dispatch through the shell stack normally, just as if you called the method on a direct reference to that core:
+
+```electron
+shell InventoryManager {
+    requires entity { Inventory }
+
+    def transfer_item(int slot) {
+        Inventory inv = sibling[Inventory];  // Returns dressed core
+        inv.add_item(get_item(slot));        // Dispatches through Inventory's shells
+        // NOT raw field access—shells like ItemValidator, StackManager, etc. intercept
+    }
+}
+```
+
+This matches Unity's `GetComponent<T>()` and Godot's node references, where returned components/nodes include all attached behaviors. Bypassing the shell stack would defeat the purpose of the shell model.
+
 ### 8.3 Shell State
 
 Shells can have their own state, stored per-attachment. State initializes **at push time**:
@@ -1816,6 +2284,40 @@ Shell operators return the core, enabling chaining:
 player <- Movable <- Controllable <- Damageable;
 player -> Frozen ->> Buff;
 ```
+
+**Chaining Semantics (Atomic with Rollback):**
+
+Shell chains are evaluated left-to-right with atomic rollback on failure:
+
+```electron
+player <- A <- B <- C;
+// Evaluation:
+// 1. Validate A's requirements against player
+// 2. Attach A
+// 3. Validate B's requirements (including requires inner)
+// 4. Attach B
+// 5. Validate C's requirements
+// 6. Attach C
+// If step 5 fails: remove B, remove A, then panic
+```
+
+| Scenario | Behavior |
+|----------|----------|
+| All succeed | All shells attached in order |
+| Middle fails (e.g., B) | A is rolled back, panic with error |
+| Last fails | All previous rolled back, panic with error |
+
+```electron
+// Example: C requires inner { B }, but B wasn't attached due to error
+player <- A <- B <- C;
+// If B fails requirements:
+// - A is detached (rollback)
+// - Panic: "Cannot attach shell 'B' to core 'Player': missing required field 'velocity' of type 'vec3'"
+
+// After panic, player has NO new shells (clean rollback)
+```
+
+This transactional approach prevents inconsistent state. Game code should fail loudly rather than leave objects partially configured.
 
 ### 8.5 Shell Stacking and Method Resolution
 
@@ -1985,6 +2487,55 @@ shell HealthManager {
 }
 ```
 
+**Multiple Shell Instances (`inner_all`, `outer_all`):**
+
+When multiple instances of the same shell type exist in the stack, `inner[T]` returns only the first match (closest to current position). To access all instances, use `inner_all[T]`:
+
+```electron
+// Stack: DamageAmp -> Buff -> Buff -> Buff -> BaseStats
+// (Three Buff instances stacked)
+
+shell DamageAmp {
+    def calculate_damage(int base) -> int {
+        int damage = base;
+
+        // inner[Buff].get_multiplier() - only first Buff (closest)
+        // inner_all[Buff] - returns list of all Buff shells below
+
+        for Buff b in inner_all[Buff] {
+            damage = (int)(damage * b.get_multiplier());
+        }
+
+        return damage;
+    }
+}
+
+shell Buff {
+    float multiplier = 1.0;
+
+    def get_multiplier() -> float {
+        return multiplier;
+    }
+}
+```
+
+| Syntax | Returns | Use Case |
+|--------|---------|----------|
+| `inner[T]` | First T below (or default) | Single delegation |
+| `inner[T]!` | First T below (or panic) | Required delegation |
+| `inner_all[T]` | `list[T]` of all T below | Aggregation (sum all buffs, etc.) |
+| `outer[T]` | First T above (or default) | Service lookup |
+| `outer_all[T]` | `list[T]` of all T above | Multi-provider queries |
+
+`inner_all[T]` and `outer_all[T]` return empty lists if no matching shells exist—they never panic. The returned list is ordered by stack position (closest first).
+
+```electron
+// Aggregate all buff multipliers
+float total = inner_all[Buff].reduce(1.0, (float acc, Buff b) -> float {
+    return acc * b.get_multiplier();
+});
+```
+
 **Strict Shells:**
 
 Mark a shell as `strict` to require that all `inner` calls have a handler:
@@ -1999,6 +2550,8 @@ strict shell DamageProcessor {
     }
 }
 ```
+
+**Note:** The `strict` modifier changes the semantics of `inner.method()` calls within the shell. When reading code, `inner.method()` in a strict shell behaves like `inner!.method()` (panic on no handler), while in a non-strict shell it returns the default value. Always check the shell declaration to understand the behavior. IDEs should highlight strict shells distinctly.
 
 ### 8.7 Upward Delegation with `outer`
 
@@ -2070,7 +2623,7 @@ shell Equipment {
 
 **Cycle Detection:**
 
-Mutual recursion between `inner` and `outer` calls can create infinite loops. The runtime detects and prevents this:
+Mutual recursion between `inner` and `outer` calls can create infinite loops. The runtime detects and prevents this using depth-based detection:
 
 ```electron
 shell A {
@@ -2084,15 +2637,14 @@ shell B {
         inner[A].foo();  // Calls down to A - infinite loop!
     }
 }
-
-// Runtime behavior: Panic with "Cycle detected: A.foo -> B.bar -> A.foo"
 ```
 
-The runtime maintains a call chain during method dispatch:
-1. Each method invocation is tracked as `(shell_instance, method_name)`
-2. Before dispatching, check if this pair exists in the current call chain
-3. If duplicate found, panic with cycle trace
-4. Call chain is cleared when the top-level call completes
+| Build | Detection | Error Message |
+|-------|-----------|---------------|
+| Debug | Full call-chain + depth limit | `"Cycle detected: A.foo -> B.bar -> A.foo"` |
+| Release | Depth limit only (64 calls) | `"Shell call depth exceeded (64): possible infinite recursion"` |
+
+The depth-based detection has negligible overhead (one increment/decrement per call) and prevents infinite loops from freezing the game in release builds.
 
 ### 8.8 Shell Composition
 
@@ -2257,20 +2809,65 @@ shell Vec3Ops {
 
 **Supported Operator Methods:**
 
-| Method | Operator |
-|--------|----------|
-| `__add__` | `+` |
-| `__sub__` | `-` |
-| `__mul__` | `*` |
-| `__div__` | `/` |
-| `__mod__` | `%` |
-| `__eq__` | `==` |
-| `__neq__` | `!=` |
-| `__lt__` | `<` |
-| `__gt__` | `>` |
-| `__lte__` | `<=` |
-| `__gte__` | `>=` |
-| `__neg__` | `-` (unary) |
+| Method | Operator | Reverse |
+|--------|----------|---------|
+| `__add__` | `+` | `__radd__` |
+| `__sub__` | `-` | `__rsub__` |
+| `__mul__` | `*` | `__rmul__` |
+| `__div__` | `/` | `__rdiv__` |
+| `__mod__` | `%` | `__rmod__` |
+| `__eq__` | `==` | - |
+| `__neq__` | `!=` | - |
+| `__lt__` | `<` | - |
+| `__gt__` | `>` | - |
+| `__lte__` | `<=` | - |
+| `__gte__` | `>=` | - |
+| `__neg__` | `-` (unary) | - |
+
+**Operator Dispatch Rules:**
+
+Operators use standard shell stack resolution (topmost shell wins). For binary operators:
+
+1. Try LHS's `__op__` method (e.g., `a.__add__(b)`)
+2. If LHS has no handler, try RHS's `__rop__` method (e.g., `b.__radd__(a)`)
+3. If neither exists, use built-in behavior or error
+
+```electron
+shell ScaledVector {
+    requires { float x, float y, float z }
+
+    // LHS handler: vec * scalar
+    def __mul__(float scalar) -> vec3 {
+        return vec3(core.x * scalar, core.y * scalar, core.z * scalar);
+    }
+
+    // RHS handler: scalar * vec (reverse)
+    def __rmul__(float scalar) -> vec3 {
+        return vec3(core.x * scalar, core.y * scalar, core.z * scalar);
+    }
+}
+
+// Both work:
+vec3 a = my_vec * 2.0;   // Calls __mul__
+vec3 b = 2.0 * my_vec;   // Calls __rmul__
+```
+
+**Inner Delegation:**
+
+Operator methods can delegate via `inner` like regular methods:
+
+```electron
+shell DebugOps {
+    def __add__(vec3 other) -> vec3 {
+        print("Adding vectors");
+        return inner.__add__(other);  // Delegate to shell below
+    }
+}
+```
+
+**Default Behavior:**
+
+Cores without `__eq__`/`__neq__` shells fall back to reference equality.
 
 ### 8.12 Shell Stack Restrictions
 
@@ -2460,7 +3057,11 @@ The compiler provides best-effort static analysis when shell stacks are known:
 
 ## 9. Enums
 
-Enums define a type with a fixed set of variants.
+Enums define a type with a fixed set of variants. Enums must have at least one variant; empty enums are a compile error:
+
+```electron
+enum Empty { }  // Compile error: enum must have at least one variant
+```
 
 ### 9.1 Simple Enums
 
@@ -2746,9 +3347,14 @@ def fade_in(float duration) -> coro {
 
 ### 11.4 Spawning Coroutines
 
+The `spawn` keyword creates a new coroutine instance and registers it with the engine scheduler:
+
 ```electron
 coro patrol = spawn enemy_patrol();
 coro fade = spawn fade_in(1.5);
+
+// spawn is a keyword, not a function
+coro c = spawn compute_path(start, end);
 ```
 
 ### 11.5 Yield Expressions
@@ -2782,6 +3388,43 @@ c.cancel();
 yield c;
 ```
 
+**Cancellation Cleanup with `on_cancel`:**
+
+Use `on_cancel` blocks to register cleanup code that runs when a coroutine is cancelled:
+
+```electron
+def critical_op() -> coro {
+    Resource r = acquire_resource();
+
+    // Register cancellation handler
+    on_cancel {
+        release_resource(r);
+    };
+
+    yield wait(5.0);
+
+    // Normal cleanup (on_cancel does NOT run on normal completion)
+    release_resource(r);
+}
+```
+
+| Aspect | Behavior |
+|--------|----------|
+| **Trigger** | Runs when coroutine is cancelled via `.cancel()` or hot reload |
+| **Hot reload** | `on_cancel` blocks DO run when cancelled due to hot reload |
+| **Order** | Multiple `on_cancel` blocks execute in LIFO order (like `defer`) |
+| **Restrictions** | Cannot contain `yield`, `return`, `break`, `continue`, or nested `on_cancel` |
+| **Normal completion** | Does NOT run if coroutine completes normally |
+
+```electron
+def example() -> coro {
+    on_cancel { print("first registered, runs last"); };
+    on_cancel { print("second registered, runs first"); };
+    yield wait(1.0);
+}
+// If cancelled: prints "second registered, runs first" then "first registered, runs last"
+```
+
 ### 11.7 Coroutine Return Values
 
 ```electron
@@ -2805,7 +3448,7 @@ list[vec3] path = yield path_coro;  // Wait and get result
 |-------|-------------|---------------|----------------------|
 | Running | `true` | `false` | Suspends until completion, returns value |
 | Completed | `false` | `false` | Returns cached result immediately |
-| Cancelled | `false` | `true` | Returns default value for return type |
+| Cancelled | `false` | `true` | Returns default for T, or `error(CancellationError)` for `result[T,E]` |
 
 **Detailed Semantics:**
 
@@ -2815,15 +3458,38 @@ coro[int] c = spawn compute();
 int r1 = yield c;  // Waits, gets result (e.g., 42)
 int r2 = yield c;  // Returns cached 42 immediately (no wait)
 
-// Yielding on cancelled coroutine
+// Yielding on cancelled coroutine (simple types)
 coro[int] c = spawn compute();
 c.cancel();
 int r = yield c;   // Returns 0 (default for int)
+
+// Yielding on cancelled coroutine (result types)
+coro[result[int, Error]] c = spawn may_fail();
+c.cancel();
+result[int, Error] r = yield c;  // Returns error(CancellationError)
+
+match r {
+    success(val) => use(val),
+    error(e) if e is CancellationError => handle_cancelled(),
+    error(e) => handle_other_error(e)
+}
 
 // Result access without yielding
 coro[T].result() -> T?    // Returns null if not completed, value if completed
 coro[T].result_or(T) -> T // Returns default if not completed
 ```
+
+**CancellationError:**
+
+`CancellationError` is a built-in error type for cancelled coroutines:
+
+```electron
+core CancellationError {
+    public string message = "Coroutine was cancelled";
+}
+```
+
+This allows cancelled coroutines with `result` return types to be handled gracefully rather than panicking or returning misleading success values.
 
 ### 11.8 Engine Scheduler Contract
 
@@ -2970,6 +3636,24 @@ def on_disabled() {
 }
 ```
 
+**Multiple Handlers:**
+
+Multiple functions in the same module can have the same lifecycle decorator. They execute in declaration order:
+
+```electron
+@on_update
+def update_physics(float dt) { }
+
+@on_update
+def update_animation(float dt) { }
+
+@on_update
+def update_ai(float dt) { }
+// Execution order: update_physics, update_animation, update_ai
+```
+
+Across modules, execution order follows import order. For deterministic behavior, consider using a single entry point that calls other functions in explicit order.
+
 ### 13.2 Property Change Observers
 
 React to field changes. The field name in `@change` refers to fields declared in the shell's `requires` block:
@@ -2996,10 +3680,22 @@ shell HealthUI {
 }
 ```
 
+**Observer Timing and Semantics:**
+
+| Aspect | Behavior |
+|--------|----------|
+| **Timing** | End of frame, after all `@on_update` handlers |
+| **Batching** | Multiple writes within a frame trigger ONE observer call |
+| **Watched field values** | `old_value` is frame-start, `new_value` is current |
+| **Non-watched field values** | Observers see CURRENT values for all non-watched fields |
+| **Nested changes** | If observer modifies watched field, change is deferred to next frame |
+| **Cascading** | If observer A modifies field watched by observer B, B fires in frame N+1 (dirty bits prevent A→B→A loops) |
+| **Order** | Observers called in shell stack order (top-down) |
+
 **Rules:**
 - `@change(field)` watches `requires` field, error if ambiguous or missing
 - Shell's own fields are NOT watchable (no self-observation)
-- Nested paths are not supported (use explicit polling instead)
+- Nested paths are not supported (`@change(transform.position)` is a compile error)
 
 ### 13.3 The `entity` Type
 
@@ -3124,6 +3820,31 @@ for entity e in enemies {
 }
 ```
 
+**Query Snapshots:**
+
+Entity queries return a snapshot of matching entities at query time. The returned list is not automatically updated when entities are created, destroyed, or have components added/removed:
+
+```electron
+list[entity] enemies = scene.query[Enemy, Transform]();
+
+// This is a SNAPSHOT at query time
+entity.destroy(enemies[0]);
+
+// enemies list still contains the destroyed entity handle
+enemies[0]![Enemy];  // Panic: "Accessing core from destroyed entity..."
+
+// Safe pattern: validate before use
+for entity e in enemies {
+    if entity.alive(e) {
+        Enemy data = e![Enemy];
+        // Use data within this frame
+    }
+}
+
+// Or: re-query when freshness matters
+enemies = scene.query[Enemy, Transform]();  // Fresh snapshot
+```
+
 ### 13.4 Hot Reloading
 
 Electron is designed for hot reloading:
@@ -3140,6 +3861,7 @@ Electron is designed for hot reloading:
    - If structure unchanged (same yield points): continue at current position
    - If structure changed: restart from beginning with warning logged
 4. **Registered callbacks are re-bound by name**
+5. **`@change` observers:** Pending notifications are cleared. Post-reload, all fields are compared to defaults; observers fire for mismatches to resync UI/derived state
 
 **Coroutine Hot Reload Control:**
 
@@ -3152,6 +3874,17 @@ def critical_sequence() -> coro { }
 
 @hot_reload_cancel           // Cancel and don't restart
 def optional_effect() -> coro { }
+```
+
+**Note:** When a coroutine is cancelled due to hot reload (via `@hot_reload_cancel` or structure change with `@hot_reload_restart`), any registered `on_cancel` blocks DO run. Use `on_cancel` to clean up resources:
+
+```electron
+@hot_reload_cancel
+def holds_resource() -> coro {
+    Resource r = acquire();
+    on_cancel { release(r); };  // Runs on hot reload cancel
+    yield wait(5.0);
+}
 ```
 
 **Migration Logic:**
@@ -3226,6 +3959,10 @@ Available without imports:
 print(value)              // Print to console
 assert(condition, msg?)   // Runtime assertion (panic on failure)
 
+// Control flow
+unreachable()             // Marks unreachable code (returns never)
+unreachable(msg)          // With custom message
+
 // Math
 sin(x), cos(x), tan(x)
 asin(x), acos(x), atan(x), atan2(y, x)
@@ -3238,6 +3975,28 @@ lerp(a, b, t)
 // Type queries
 typeof(value) -> string
 ```
+
+**The `unreachable()` Function:**
+
+Marks code that should never execute. Returns the `never` type (see Section 2.13):
+
+```electron
+def process(State s) -> int {
+    return match s {
+        State.A => 1,
+        State.B => 2,
+        State.Removed => unreachable("State.Removed should never occur")
+    };
+}
+
+// never coerces to any type
+int x = if condition then 42 else unreachable();
+```
+
+| Build | Behavior |
+|-------|----------|
+| Debug | Panics with message: `"unreachable code reached"` or custom message |
+| Release | Undefined behavior (optimizer may assume never reached) |
 
 ### 14.2 Engine Modules
 
@@ -3287,6 +4046,7 @@ nums.push(4);              // Add to end
 int last = nums.pop();     // Remove and return last
 nums.insert(0, 10);        // Insert at index
 nums.remove(1);            // Remove at index
+nums.swap_remove(1);       // O(1) remove, swaps with last element
 nums.clear();              // Remove all
 
 int len = nums.length;
@@ -3298,6 +4058,31 @@ int idx = nums.index_of(2);  // -1 if not found
 list[int] doubled = nums.map((int x) -> int { return x * 2; });
 list[int] evens = nums.filter((int x) -> bool { return x % 2 == 0; });
 int sum = nums.reduce(0, (int acc, int x) -> int { return acc + x; });
+list[int] rev = nums.reversed();  // Returns reversed copy
+```
+
+**Iteration Safety:**
+
+Modifying a list during `for...in` iteration produces undefined behavior:
+
+```electron
+// UNDEFINED BEHAVIOR - do not do this:
+for int i, Enemy e in enemies {
+    enemies.remove(i);  // UB: invalidates iterator
+}
+
+// Safe patterns:
+// 1. Filter to new list
+enemies = enemies.filter((Enemy e) -> bool { return e.hp > 0; });
+
+// 2. Backwards iteration with swap_remove
+int i = enemies.length - 1;
+while i >= 0 {
+    if enemies[i].hp <= 0 {
+        enemies.swap_remove(i);
+    }
+    i -= 1;
+}
 ```
 
 **Dict:**
@@ -3351,6 +4136,36 @@ bool has = r.contains(5);
 list[int] items = r.to_list();
 ```
 
+**Result:**
+```electron
+result[int, string] res = success(42);
+
+// Check variant
+bool ok = res.is_success();
+bool err = res.is_error();
+
+// Extract values (panic if wrong variant)
+int val = res.unwrap();           // Panics if error
+string e = res.unwrap_err();      // Panics if success
+
+// Extract with defaults
+int val = res.unwrap_or(0);       // Returns 0 if error
+int val = res.unwrap_or_else((string e) -> int { return -1; });
+
+// Transform success value
+result[string, string] mapped = res.map((int x) -> string { return x.to_string(); });
+
+// Transform error value
+result[int, Error] converted = res.map_err((string e) -> Error {
+    return (Error) { message: e };
+});
+
+// Chain operations
+result[int, string] chained = res.and_then((int x) -> result[int, string] {
+    return if x > 0 then success(x * 2) else error("negative");
+});
+```
+
 ---
 
 ## 15. Memory Model
@@ -3389,7 +4204,7 @@ Use coroutines for async-style programming. Coroutines are cooperative (not pree
 
 ### 16.4 Future Consideration
 
-Job system integration is planned for v2.0:
+Job system integration is planned for a future release:
 ```electron
 @parallel
 def process_batch(list[Entity] batch) { }
@@ -3412,8 +4227,9 @@ shellDecl       → shellModifiers "shell" IDENTIFIER compositionClause? allowsC
 shellModifiers  → "strict"? "unique"? "sealed"?
 compositionClause → ":" IDENTIFIER ("," IDENTIFIER)*
 allowsClause    → "allows" "[" IDENTIFIER ("," IDENTIFIER)* "]"
-shellRequires   → fieldRequires? innerRequires?
+shellRequires   → fieldRequires? entityRequires? innerRequires?
 fieldRequires   → "requires" "{" typeField ("," typeField)* "}"
+entityRequires  → "requires" "entity" "{" IDENTIFIER ("," IDENTIFIER)* "}"
 innerRequires   → "requires" "inner" "{" IDENTIFIER ("," IDENTIFIER)* "}"
 enumDecl        → "enum" IDENTIFIER "{" enumVariant ("," enumVariant)* "}"
 funcDecl        → decorator* "def" IDENTIFIER "(" paramList? ")" ("->" type)? block
@@ -3426,11 +4242,11 @@ paramList       → param ("," param)*
 param           → "mut"? "*"? type IDENTIFIER ("=" expression)?
 
 type            → primitiveType | collectionType | funcType | builtinType
-                | tupleType | nullableType | IDENTIFIER
+                | tupleType | nullableType | IDENTIFIER | "never"
 primitiveType   → "int" | "float" | "bool" | "string"
                 | "vec2" | "vec3" | "vec4" | "mat2" | "mat3" | "mat4" | "range"
 collectionType  → "list" "[" type "]" | "dict" "[" type "->" type "]"
-funcType        → "func" "[" "(" typeList? ")" "->" type "]"
+funcType        → "func" "[" "(" typeList? ")" "->" type "]" "local"?
 builtinType     → "coro" ("[" type "]")? | "entity"
                 | "result" "[" type "," type "]"
 tupleType       → "tuple" "[" type ("," type)+ "]"
@@ -3439,7 +4255,9 @@ nullableType    → type "?"
 statement       → exprStmt | varDecl | assignment | ifStmt | whileStmt
                 | doWhileStmt | loopStmt | forStmt | matchStmt
                 | returnStmt | yieldStmt | breakStmt | continueStmt
-                | deferStmt | labeledStmt | block
+                | deferStmt | onCancelStmt | labeledStmt | block
+
+onCancelStmt    → "on_cancel" block
 
 varDecl         → type IDENTIFIER ("=" expression)? ";"
 assignment      → assignTarget assignOp expression ";"
@@ -3474,7 +4292,8 @@ continueStmt    → "continue" IDENTIFIER? ";"
 expression      → ternary
 ternary         → "if" expression "then" expression "else" expression | logicOr
 logicOr         → logicAnd ("||" logicAnd)*
-logicAnd        → equality ("&&" equality)*
+logicAnd        → isExpr ("&&" isExpr)*
+isExpr          → equality (("is" | "is" "not") pattern)?
 equality        → comparison (("==" | "!=") comparison)*
 comparison      → shellExpr (("<" | ">" | "<=" | ">=") shellExpr)*
 shellExpr       → bitOr (("<-" | "->" | "<<-" | "->>" | ">-") IDENTIFIER)*
@@ -3495,10 +4314,17 @@ member          → ("." | "?.") IDENTIFIER
 primary         → NUMBER | STRING | "true" | "false" | "null"
                 | IDENTIFIER | "(" expression ")" | listLiteral | dictLiteral
                 | coreLiteral | vectorLiteral | tupleLiteral | rangeLiteral
-                | closure | innerExpr | outerExpr | qualifiedCall
+                | closure | innerExpr | outerExpr | innerAllExpr | outerAllExpr
+                | siblingExpr | siblingAllExpr | spawnExpr | qualifiedCall
 
 innerExpr       → "inner" typeArgument? failMode? "." IDENTIFIER "(" argList? ")"
 outerExpr       → "outer" typeArgument? failMode? "." IDENTIFIER "(" argList? ")"
+innerAllExpr    → "inner_all" "[" IDENTIFIER "]"
+outerAllExpr    → "outer_all" "[" IDENTIFIER "]"
+siblingExpr     → "sibling" "[" IDENTIFIER "]" "?"?
+siblingAllExpr  → "sibling_all" "[" IDENTIFIER "]"
+spawnExpr       → "spawn" callExpr
+callExpr        → IDENTIFIER "(" argList? ")"
 typeArgument    → "[" IDENTIFIER "]"
 failMode        → "!" | "?"
 
@@ -3525,7 +4351,9 @@ qualifiedCall   → IDENTIFIER "." IDENTIFIER "(" argList? ")"
 
 enumVariant     → IDENTIFIER ("(" type ("," type)* ")")?
 
-decorator       → "@" decoratorName ("(" argList? ")")?
+decorator       → "@" decoratorName decoratorArgs?
+decoratorArgs   → "(" (IDENTIFIER | argList)? ")"
+                // @change(fieldName) takes identifier; others take expressions
 decoratorName   → "comptime" | "debug" | "on_update" | "on_fixed_update"
                 | "on_collision" | "on_trigger" | "on_destroy"
                 | "on_enable" | "on_disable" | "on_hot_reload" | "change"
@@ -3548,20 +4376,29 @@ namedArgs       → IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*
 | 2 | `??` | Right |
 | 3 | `\|\|` | Left |
 | 4 | `&&` | Left |
-| 5 | `==` `!=` | Left |
-| 6 | `<` `>` `<=` `>=` | Left |
-| 7 | `<-` `->` `<<-` `->>` `>-` (shell ops) | Left |
-| 8 | `\|` | Left |
-| 9 | `^` | Left |
-| 10 | `&` | Left |
-| 11 | `<<` `>>` | Left |
-| 12 | `+` `-` | Left |
-| 13 | `*` `/` `%` | Left |
-| 14 | `..` `..=` | Left |
-| 15 | `!` `-` `~` (unary) | Right |
-| 16 | `?` (error propagation) | Postfix |
-| 17 | `.` `?.` `()` `[]` | Left |
-| 18 (highest) | Primary | - |
+| 5 | `is` `is not` | Left |
+| 6 | `==` `!=` | Left |
+| 7 | `<` `>` `<=` `>=` | Left |
+| 8 | `<-` `->` `<<-` `->>` `>-` (shell ops) | Left |
+| 9 | `\|` | Left |
+| 10 | `^` | Left |
+| 11 | `&` | Left |
+| 12 | `<<` `>>` | Left |
+| 13 | `+` `-` | Left |
+| 14 | `*` `/` `%` | Left |
+| 15 | `..` `..=` | Left |
+| 16 | `!` `-` `~` (unary) | Right |
+| 17 | `?` (error propagation) | Postfix |
+| 18 | `.` `?.` `()` `[]` | Left |
+| 19 (highest) | Primary | - |
+
+**Disambiguation examples:**
+
+```electron
+a && b is Foo       // a && (b is Foo) - 'is' binds tighter than &&
+a == b is Foo       // (a == b) is Foo - 'is' binds looser than ==
+x is Foo && y > 0   // (x is Foo) && (y > 0)
+```
 
 ---
 
@@ -3583,8 +4420,9 @@ namedArgs       → IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*
 | `list[T]` | pointer | 8 |
 | `dict[K->V]` | pointer | 8 |
 | Core | pointer | 8 |
-| Struct | sum of fields (max 64) | max field alignment |
+| Struct | sum of fields (no limit, warning if > 64) | max field alignment |
 | Tuple | sum of elements | max element alignment |
+| `never` | 0 (uninhabited) | - |
 
 ---
 
@@ -3608,6 +4446,7 @@ namedArgs       → IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*
 | Core | All fields at defaults |
 | Struct | All fields at defaults |
 | Nullable type | `null` |
+| `never` | (uninhabited - no default) |
 
 ---
 

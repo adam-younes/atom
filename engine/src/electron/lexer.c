@@ -1,7 +1,7 @@
 #ifndef ATOM_LEXER
 #define ATOM_LEXER 
 
-#include <script/lexer.h>
+#include <electron/lexer.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -21,8 +21,6 @@ static char *load_electron_script(const char *path) {
   return buf;
 }
 
-char **lex(const char *path) {
-
-}
+void lexer_lex()
 
 #endif // ATOM_LEXER
