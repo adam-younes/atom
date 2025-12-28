@@ -9,7 +9,8 @@ typedef struct {
 } lexer;
 
 void lexer_init(lexer *lexer); 
-token_list lex_string(const char *source, const char *filename, error_context *err_ctx);
 void lexer_free(lexer *lexer);
+
+token_list lex_string(const char *source, const char *filename, error_context *err_ctx);
 
 #endif // ELECTRON_LEXER_H
